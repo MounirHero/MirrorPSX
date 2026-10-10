@@ -30,3 +30,11 @@
 *.exe
 *.out
 *.app
+
+# Local build products and generated dependency downloads
+/build*/
+/cmake-build-*/
+/.cache/
+/mirrorpsx.key
+/imgui.ini
+/.vs/

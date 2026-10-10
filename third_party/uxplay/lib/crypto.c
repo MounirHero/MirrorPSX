@@ -351,7 +351,6 @@ struct ed25519_key_s {
 ed25519_key_t *ed25519_key_generate(const char *device_id, const char *keyfile, int *result) {
     EVP_PKEY_CTX *pctx = NULL;
     BIO *bp = NULL;
-    FILE *file = NULL;
     bool new_pk = false;
     bool use_keyfile = strlen(keyfile);
 
@@ -361,12 +360,10 @@ ed25519_key_t *ed25519_key_generate(const char *device_id, const char *keyfile, 
     assert(key);
    
     if (use_keyfile) {
-        file = fopen(keyfile, "r");
-        if (file) {
-            bp = BIO_new_fp(file, BIO_NOCLOSE);
-            key->pkey = PEM_read_PrivateKey(file, NULL, NULL, NULL);
+        bp = BIO_new_file(keyfile, "r");
+        if (bp) {
+            key->pkey = PEM_read_bio_PrivateKey(bp, NULL, NULL, NULL);
             BIO_free(bp);
-            fclose(file);
             if (!key->pkey) {
                 new_pk = true;
             }
@@ -398,12 +395,10 @@ ed25519_key_t *ed25519_key_generate(const char *device_id, const char *keyfile, 
         }
         EVP_PKEY_CTX_free(pctx);
         if (use_keyfile) {
-            file = fopen(keyfile, "w");
-            if (file) {
-                bp = BIO_new_fp(file, BIO_NOCLOSE);
+            bp = BIO_new_file(keyfile, "w");
+            if (bp) {
                 PEM_write_bio_PrivateKey(bp, key->pkey, NULL, NULL, 0, NULL, NULL);
                 BIO_free(bp);
-                fclose(file);
                 *result = 1;
             }
         }

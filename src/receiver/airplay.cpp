@@ -12,7 +12,7 @@ int AirPlay::codec(bool hevc) { std::lock_guard lock(decode_mutex_); return deco
 void AirPlay::flush() { std::lock_guard lock(decode_mutex_); decoder_.flush(); }
 bool AirPlay::start(const std::string& name) {
     stop();
-    if(!decoder_.open()) { state_.update([](auto& s){s.error="Decoder H.264 non disponibile";}); return false; }
+    { std::lock_guard lock(decode_mutex_); if(!decoder_.open()) { state_.update([](auto& s){s.error="H.264 decoder unavailable";}); return false; } }
     raop_callbacks_t cb{}; cb.cls=this;
     cb.video_process=[](void* p,raop_ntp_t*,video_decode_struct* v){static_cast<AirPlay*>(p)->video(v->data,v->data_len);};
     cb.audio_process=[](void*,raop_ntp_t*,audio_decode_struct*){};
@@ -27,19 +27,19 @@ bool AirPlay::start(const std::string& name) {
     cb.conn_feedback=[](void*){};
     cb.video_pause=[](void*){}; cb.video_resume=[](void*){};
     cb.audio_flush=[](void*){};
-    cb.audio_get_format=[](void*,unsigned char*,unsigned short*,bool*,bool*,uint64_t*){};
+    cb.audio_get_format=[](void*,unsigned char* ct,unsigned short* spf,bool* screen,bool* media,uint64_t* fmt){if(ct)*ct=0;if(spf)*spf=0;if(screen)*screen=true;if(media)*media=false;if(fmt)*fmt=0;};
     cb.audio_set_volume=[](void*,float){};
     cb.audio_set_client_volume=[](void*){return 0.0;};
-    cb.video_report_size=[](void*,float*,float*,float*,float*){};
+    cb.video_report_size=[](void*,float* sw,float* sh,float* w,float* h){if(sw)*sw=1920;if(sh)*sh=1080;if(w)*w=1920;if(h)*h=1080;};
     cb.check_register=[](void*,const char*){return false;};
     cb.register_client=[](void*,const char*,const char*,const char*){};
     cb.passwd=[](void*,int* len)->const char*{*len=0;return nullptr;};
     server_=raop_init(&cb);
-    if(!server_) { state_.update([](auto& s){s.error="Avvio AirPlay fallito";}); return false; }
+    if(!server_) { state_.update([](auto& s){s.error="AirPlay initialization failed";}); return false; }
     raop_set_log_level(server_,LOGGER_INFO);
     raop_set_log_callback(server_,[](void*,int,const char* msg){std::fprintf(stderr,"[AirPlay] %s\n",msg);},nullptr);
     // Stable locally administered identity; persistent pairing key stored by UxPlay.
-    if(raop_init2(server_,0,"02:4D:50:53:58:01","mirrorpsx.key")!=0) { stop(); return false; }
+    if(raop_init2(server_,0,"02:4D:50:53:58:01","mirrorpsx.key")!=0) { stop(); state_.update([](auto& s){s.error="AirPlay pairing initialization failed";}); return false; }
     int error=0; const char mac[]={0x02,0x4d,0x50,0x53,0x58,0x01};
     discovery_=dnssd_init(name.c_str(),int(name.size()),mac,6,1,&error);
     if(!discovery_ || error) { stop(); state_.update([&](auto& s){s.error="Scoperta mDNS non disponibile ("+std::to_string(error)+")";}); return false; }
@@ -51,9 +51,9 @@ bool AirPlay::start(const std::string& name) {
     unsigned short tcp[2]={7100,7101},udp[3]={7102,7103,7104};
     raop_set_tcp_ports(server_,tcp); raop_set_udp_ports(server_,udp);
     unsigned short port=7100;
-    if(raop_start_httpd(server_,&port)<0) { stop(); state_.update([](auto& s){s.error="Porta AirPlay occupata";}); return false; }
+    if(raop_start_httpd(server_,&port)<0) { stop(); state_.update([](auto& s){s.error="AirPlay TCP port unavailable";}); return false; }
     raop_set_port(server_,port);
-    if(dnssd_register_raop(discovery_,port)!=0 || dnssd_register_airplay(discovery_,port)!=0) { stop(); state_.update([](auto& s){s.error="Annuncio in rete fallito";}); return false; }
+    if(dnssd_register_raop(discovery_,port)!=0 || dnssd_register_airplay(discovery_,port)!=0) { stop(); state_.update([](auto& s){s.error="AirPlay network advertisement failed";}); return false; }
     state_.update([&](auto& s){s.listening=true;s.name=name;s.port=port;s.error.clear();});
     return true;
 }
