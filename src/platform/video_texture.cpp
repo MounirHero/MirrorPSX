@@ -5,103 +5,201 @@
 
 namespace mirror {
 namespace {
-uint32_t memory_type(VkPhysicalDevice physical,uint32_t bits,VkMemoryPropertyFlags flags) {
+uint32_t find_memory(VkPhysicalDevice physical, uint32_t bits, VkMemoryPropertyFlags flags) {
     VkPhysicalDeviceMemoryProperties props{};
-    vkGetPhysicalDeviceMemoryProperties(physical,&props);
-    for(uint32_t i=0;i<props.memoryTypeCount;++i)
-        if((bits & (1u<<i)) && (props.memoryTypes[i].propertyFlags & flags)==flags) return i;
+    vkGetPhysicalDeviceMemoryProperties(physical, &props);
+    for (uint32_t i = 0; i < props.memoryTypeCount; ++i) {
+        if ((bits & (1u << i)) && (props.memoryTypes[i].propertyFlags & flags) == flags) return i;
+    }
     return UINT32_MAX;
 }
 }
+
 void VideoTexture::destroy_image() {
-    if(descriptor_) { ImGui_ImplVulkan_RemoveTexture(descriptor_); descriptor_=VK_NULL_HANDLE; }
-    if(sampler_) vkDestroySampler(device_,sampler_,nullptr);
-    if(view_) vkDestroyImageView(device_,view_,nullptr);
-    if(image_) vkDestroyImage(device_,image_,nullptr);
-    if(memory_) vkFreeMemory(device_,memory_,nullptr);
-    sampler_=VK_NULL_HANDLE;view_=VK_NULL_HANDLE;image_=VK_NULL_HANDLE;memory_=VK_NULL_HANDLE;
-    width_=height_=0;
-    initialized_=false;
+    if (descriptor_) ImGui_ImplVulkan_RemoveTexture(descriptor_);
+    if (sampler_) vkDestroySampler(device_, sampler_, nullptr);
+    if (view_) vkDestroyImageView(device_, view_, nullptr);
+    if (image_) vkDestroyImage(device_, image_, nullptr);
+    if (memory_) vkFreeMemory(device_, memory_, nullptr);
+    descriptor_ = VK_NULL_HANDLE;
+    sampler_ = VK_NULL_HANDLE;
+    view_ = VK_NULL_HANDLE;
+    image_ = VK_NULL_HANDLE;
+    memory_ = VK_NULL_HANDLE;
+    width_ = height_ = 0;
+    initialized_ = false;
 }
-VideoTexture::~VideoTexture(){ destroy_image(); }
-bool VideoTexture::upload(VkQueue queue,uint32_t family,const VideoFrame& frame) {
-    if(frame.width<=0 || frame.height<=0 || frame.width>4096 || frame.height>4096 ||
-       frame.rgba.size()!=size_t(frame.width)*size_t(frame.height)*4) return false;
-    // The application synchronizes uploads with the frame loop. Waiting also protects
-    // the previous descriptor and image from pending GPU draws during resize.
-    if(vkDeviceWaitIdle(device_)!=VK_SUCCESS) return false;
-    if(width_!=frame.width || height_!=frame.height) {
+
+void VideoTexture::destroy_upload() {
+    if (command_pool_) vkDestroyCommandPool(device_, command_pool_, nullptr);
+    if (upload_buffer_) vkDestroyBuffer(device_, upload_buffer_, nullptr);
+    if (upload_memory_) vkFreeMemory(device_, upload_memory_, nullptr);
+    command_pool_ = VK_NULL_HANDLE;
+    command_ = VK_NULL_HANDLE;
+    upload_buffer_ = VK_NULL_HANDLE;
+    upload_memory_ = VK_NULL_HANDLE;
+    upload_capacity_ = 0;
+}
+
+VideoTexture::~VideoTexture() {
+    if (device_) vkDeviceWaitIdle(device_);
+    destroy_image();
+    destroy_upload();
+}
+
+bool VideoTexture::prepare_upload(VkDeviceSize bytes, uint32_t family) {
+    if (!command_pool_) {
+        VkCommandPoolCreateInfo pi{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        pi.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        pi.queueFamilyIndex = family;
+        if (vkCreateCommandPool(device_, &pi, nullptr, &command_pool_) != VK_SUCCESS) return false;
+        VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        ai.commandPool = command_pool_;
+        ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        ai.commandBufferCount = 1;
+        if (vkAllocateCommandBuffers(device_, &ai, &command_) != VK_SUCCESS) return false;
+    }
+    if (upload_buffer_ && upload_capacity_ >= bytes) return true;
+    if (upload_buffer_) vkDestroyBuffer(device_, upload_buffer_, nullptr);
+    if (upload_memory_) vkFreeMemory(device_, upload_memory_, nullptr);
+    upload_buffer_ = VK_NULL_HANDLE;
+    upload_memory_ = VK_NULL_HANDLE;
+    upload_capacity_ = 0;
+    VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bi.size = bytes;
+    bi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(device_, &bi, nullptr, &upload_buffer_) != VK_SUCCESS) return false;
+    VkMemoryRequirements req{};
+    vkGetBufferMemoryRequirements(device_, upload_buffer_, &req);
+    const auto type = find_memory(physical_, req.memoryTypeBits,
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                  VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (type == UINT32_MAX) return false;
+    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = type;
+    if (vkAllocateMemory(device_, &ai, nullptr, &upload_memory_) != VK_SUCCESS ||
+        vkBindBufferMemory(device_, upload_buffer_, upload_memory_, 0) != VK_SUCCESS) return false;
+    upload_capacity_ = bytes;
+    return true;
+}
+
+bool VideoTexture::upload(VkQueue queue, uint32_t family, const VideoFrame& frame) {
+    if (frame.width <= 0 || frame.height <= 0 ||
+        frame.width > 4096 || frame.height > 4096 ||
+        frame.rgba.size() != size_t(frame.width) * size_t(frame.height) * 4u) return false;
+
+    // Conservative synchronous implementation: the GPU completes the previous
+    // draw before an old descriptor/image is recycled. Transfer resources and
+    // optimal-tiled GPU images are reused across successive video frames.
+    if (vkDeviceWaitIdle(device_) != VK_SUCCESS) return false;
+    const auto bytes = VkDeviceSize(frame.rgba.size());
+    if (!prepare_upload(bytes, family)) return false;
+    if (width_ != frame.width || height_ != frame.height) {
         destroy_image();
-        VkFormatProperties format_properties{};
-        vkGetPhysicalDeviceFormatProperties(physical_,VK_FORMAT_R8G8B8A8_UNORM,&format_properties);
-        if(!(format_properties.linearTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) return false;
-        VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-        info.imageType=VK_IMAGE_TYPE_2D;info.format=VK_FORMAT_R8G8B8A8_UNORM;
-        info.extent={uint32_t(frame.width),uint32_t(frame.height),1};info.mipLevels=1;
-        info.arrayLayers=1;info.samples=VK_SAMPLE_COUNT_1_BIT;info.tiling=VK_IMAGE_TILING_LINEAR;
-        info.usage=VK_IMAGE_USAGE_SAMPLED_BIT;info.initialLayout=VK_IMAGE_LAYOUT_UNDEFINED;
-        if(vkCreateImage(device_,&info,nullptr,&image_)!=VK_SUCCESS) {destroy_image();return false;}
-        VkMemoryRequirements req{};vkGetImageMemoryRequirements(device_,image_,&req);
-        auto type=memory_type(physical_,req.memoryTypeBits,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        if(type==UINT32_MAX) {destroy_image();return false;}
-        VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        alloc.allocationSize=req.size;alloc.memoryTypeIndex=type;
-        if(vkAllocateMemory(device_,&alloc,nullptr,&memory_)!=VK_SUCCESS ||
-           vkBindImageMemory(device_,image_,memory_,0)!=VK_SUCCESS) {destroy_image();return false;}
+        VkFormatProperties format{};
+        vkGetPhysicalDeviceFormatProperties(physical_, VK_FORMAT_R8G8B8A8_UNORM, &format);
+        constexpr VkFormatFeatureFlags required =
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+        if ((format.optimalTilingFeatures & required) != required) return false;
+
+        VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        ii.imageType = VK_IMAGE_TYPE_2D;
+        ii.format = VK_FORMAT_R8G8B8A8_UNORM;
+        ii.extent = {uint32_t(frame.width), uint32_t(frame.height), 1};
+        ii.mipLevels = 1;
+        ii.arrayLayers = 1;
+        ii.samples = VK_SAMPLE_COUNT_1_BIT;
+        ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+        ii.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        if (vkCreateImage(device_, &ii, nullptr, &image_) != VK_SUCCESS) return false;
+        VkMemoryRequirements req{};
+        vkGetImageMemoryRequirements(device_, image_, &req);
+        auto type = find_memory(physical_, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        if (type == UINT32_MAX) type = find_memory(physical_, req.memoryTypeBits, 0);
+        if (type == UINT32_MAX) return false;
+        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        ai.allocationSize = req.size;
+        ai.memoryTypeIndex = type;
+        if (vkAllocateMemory(device_, &ai, nullptr, &memory_) != VK_SUCCESS ||
+            vkBindImageMemory(device_, image_, memory_, 0) != VK_SUCCESS) return false;
+
         VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        vi.image=image_;vi.viewType=VK_IMAGE_VIEW_TYPE_2D;vi.format=info.format;
-        vi.subresourceRange.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;vi.subresourceRange.levelCount=1;vi.subresourceRange.layerCount=1;
-        if(vkCreateImageView(device_,&vi,nullptr,&view_)!=VK_SUCCESS) {destroy_image();return false;}
+        vi.image = image_;
+        vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vi.format = ii.format;
+        vi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        vi.subresourceRange.levelCount = 1;
+        vi.subresourceRange.layerCount = 1;
+        if (vkCreateImageView(device_, &vi, nullptr, &view_) != VK_SUCCESS) return false;
+
         VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-        si.magFilter=si.minFilter=VK_FILTER_LINEAR;
-        si.addressModeU=si.addressModeV=si.addressModeW=VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        si.maxLod=1;
-        if(vkCreateSampler(device_,&si,nullptr,&sampler_)!=VK_SUCCESS) {destroy_image();return false;}
-        descriptor_=ImGui_ImplVulkan_AddTexture(sampler_,view_,VK_IMAGE_LAYOUT_GENERAL);
-        width_=frame.width;height_=frame.height;
+        si.magFilter = VK_FILTER_LINEAR;
+        si.minFilter = VK_FILTER_LINEAR;
+        si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        si.maxLod = 1;
+        if (vkCreateSampler(device_, &si, nullptr, &sampler_) != VK_SUCCESS) return false;
+        descriptor_ = ImGui_ImplVulkan_AddTexture(sampler_, view_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        if (!descriptor_) return false;
+        width_ = frame.width;
+        height_ = frame.height;
     }
-    VkImageSubresource sub{VK_IMAGE_ASPECT_COLOR_BIT,0,0};
-    VkSubresourceLayout layout{};vkGetImageSubresourceLayout(device_,image_,&sub,&layout);
-    void* mapped=nullptr;
-    if(vkMapMemory(device_,memory_,0,VK_WHOLE_SIZE,0,&mapped)!=VK_SUCCESS) return false;
-    for(int y=0;y<height_;++y)
-        std::memcpy(static_cast<uint8_t*>(mapped)+layout.offset+size_t(y)*layout.rowPitch,
-                    frame.rgba.data()+size_t(y)*width_*4,size_t(width_)*4);
-    vkUnmapMemory(device_,memory_);
-    VkCommandPool pool=VK_NULL_HANDLE;
-    VkCommandPoolCreateInfo pi{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-    pi.queueFamilyIndex=family;pi.flags=VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-    if(vkCreateCommandPool(device_,&pi,nullptr,&pool)!=VK_SUCCESS) return false;
-    VkCommandBuffer cmd=VK_NULL_HANDLE;
-    VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    ai.commandPool=pool;ai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;ai.commandBufferCount=1;
-    bool ok=vkAllocateCommandBuffers(device_,&ai,&cmd)==VK_SUCCESS;
-    if(ok) {
-        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        begin.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        ok=vkBeginCommandBuffer(cmd,&begin)==VK_SUCCESS;
-    }
-    if(ok) {
-        VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-        barrier.oldLayout=initialized_?VK_IMAGE_LAYOUT_GENERAL:VK_IMAGE_LAYOUT_UNDEFINED;
-        barrier.newLayout=VK_IMAGE_LAYOUT_GENERAL;
-        barrier.srcQueueFamilyIndex=barrier.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
-        barrier.image=image_;barrier.subresourceRange.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;
-        barrier.subresourceRange.levelCount=1;barrier.subresourceRange.layerCount=1;
-        barrier.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT;
-        barrier.dstAccessMask=VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                             0,0,nullptr,0,nullptr,1,&barrier);
-        ok=vkEndCommandBuffer(cmd)==VK_SUCCESS;
-    }
-    if(ok) {
-        VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-        submit.commandBufferCount=1;submit.pCommandBuffers=&cmd;
-        ok=vkQueueSubmit(queue,1,&submit,VK_NULL_HANDLE)==VK_SUCCESS;
-        if(ok) ok=vkQueueWaitIdle(queue)==VK_SUCCESS;
-    }
-    vkDestroyCommandPool(device_,pool,nullptr);
-    if(ok) initialized_=true;
-    return ok;
+    void* pixels = nullptr;
+    if (vkMapMemory(device_, upload_memory_, 0, bytes, 0, &pixels) != VK_SUCCESS) return false;
+    std::memcpy(pixels, frame.rgba.data(), size_t(bytes));
+    vkUnmapMemory(device_, upload_memory_);
+
+    if (vkResetCommandPool(device_, command_pool_, 0) != VK_SUCCESS) return false;
+    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (vkBeginCommandBuffer(command_, &begin) != VK_SUCCESS) return false;
+
+    VkImageMemoryBarrier into_transfer{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    into_transfer.srcAccessMask = initialized_ ? VK_ACCESS_SHADER_READ_BIT : 0;
+    into_transfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    into_transfer.oldLayout = initialized_ ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                                            : VK_IMAGE_LAYOUT_UNDEFINED;
+    into_transfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    into_transfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    into_transfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    into_transfer.image = image_;
+    into_transfer.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    into_transfer.subresourceRange.levelCount = 1;
+    into_transfer.subresourceRange.layerCount = 1;
+    vkCmdPipelineBarrier(command_, initialized_ ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+                                                : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+                         1, &into_transfer);
+
+    VkBufferImageCopy copy{};
+    copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    copy.imageSubresource.layerCount = 1;
+    copy.imageExtent = {uint32_t(width_), uint32_t(height_), 1};
+    vkCmdCopyBufferToImage(command_, upload_buffer_, image_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           1, &copy);
+
+    VkImageMemoryBarrier into_shader{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    into_shader.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    into_shader.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    into_shader.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    into_shader.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    into_shader.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    into_shader.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    into_shader.image = image_;
+    into_shader.subresourceRange = into_transfer.subresourceRange;
+    vkCmdPipelineBarrier(command_, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                         0, nullptr, 0, nullptr, 1, &into_shader);
+    if (vkEndCommandBuffer(command_) != VK_SUCCESS) return false;
+    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &command_;
+    if (vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS) return false;
+    if (vkQueueWaitIdle(queue) != VK_SUCCESS) return false;
+    initialized_ = true;
+    return true;
 }
 }

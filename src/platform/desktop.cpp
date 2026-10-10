@@ -393,9 +393,12 @@ int main(int, char**)
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+    // The scalable embedded font works at television viewing distances and
+    // does not require a desktop-system font on a prospective console port.
+    io.Fonts->AddFontDefaultVector();
 
     // Setup Dear ImGui style
-    ImGui::StyleColorsDark();
+    mirror::apply_screen_style();
     //ImGui::StyleColorsLight();
 
     // Setup Platform/Renderer backends
@@ -440,6 +443,7 @@ int main(int, char**)
     mirror::AirPlay receiver(state);
     receiver.start();
     auto texture = std::make_unique<mirror::VideoTexture>(g_PhysicalDevice,g_Device);
+    mirror::ScreenUiState screen_ui;
     uint64_t last_frame = 0;
 
     // Main loop
@@ -481,9 +485,14 @@ int main(int, char**)
                 state.update([](auto& s){s.error="Video texture upload failed";});
         }
         const auto status=state.snapshot();
-        mirror::render_screen(receiver,status,
-                              status.width && status.height ? texture->descriptor() : VK_NULL_HANDLE,
-                              texture->width(),texture->height());
+        const auto handle = status.width && status.height
+            ? static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(texture->descriptor()))
+            : ImTextureID_Invalid;
+        switch(mirror::render_screen(status,handle,texture->width(),texture->height(),screen_ui)) {
+            case mirror::ScreenAction::start: receiver.start(); break;
+            case mirror::ScreenAction::stop: receiver.stop(); break;
+            case mirror::ScreenAction::none: break;
+        }
 
         // Rendering
         ImGui::Render();

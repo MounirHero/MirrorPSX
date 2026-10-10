@@ -6,11 +6,17 @@ FFmpeg, and presents frames with a GLFW/Vulkan/Dear ImGui desktop interface.
 
 ## Project status
 
-The desktop application builds on Windows with MSYS2 MinGW64 and exposes a
-receiver start/stop control, status, pairing PIN and live video surface.
-Decoder/state tests run under CTest. Device-to-device streaming and pairing
-still require validation with physical Apple clients on a LAN. No audio
-playback or PS4/PS5 application target is implemented in this tree.
+The desktop application builds on Windows with MSYS2 MinGW64. Its actual UI
+draws through Vulkan (Dear ImGui's Vulkan backend), **not a WebView or a mocked
+console screen**. It features a TV-readable, responsive player, controller
+focus navigation, receiver controls, connection status, pairing PIN, fullscreen
+presentation, and confirmation before disconnecting.
+Decoder/state/UI tests run under CTest. Real device-to-device streaming and
+pairing require validation with Apple clients on a LAN.
+The GLFW desktop host is **not** a PS5 application. The UI and Vulkan renderer
+are compiled separately so a native PS5 display/input host can reuse them;
+there is no verified native PS5 ELF or package yet. See
+[PS5 porting status](docs/PS5_PORT.md).
 
 ## Build on Windows (MSYS2 MinGW64)
 
@@ -52,20 +58,33 @@ investigated on the target host rather than treated as successful discovery.
   lifecycle; imported UxPlay code is confined to `third_party/uxplay`.
 * `src/receiver/decoder.*`: FFmpeg codec selection and decoded RGBA output.
 * `src/receiver/state.hpp`: mutex-protected connection state and latest frame.
-* `src/platform/video_texture.*`: host-visible Vulkan image, sampled by ImGui.
-* `src/ui/screen.*`: basic controls, connection status and stream presentation.
+* `src/platform/video_texture.*`: Vulkan staging buffer, optimal-tiled GPU
+  image, and sampled descriptor for the live stream.
+* `src/ui/screen_model.hpp`: platform-independent state machine and UI actions.
+* `src/ui/screen.*`: TV-responsive receiver controls and video presentation,
+  rendered through Dear ImGui; no GLFW/Win32 headers in these files.
+* `src/ui/gamepad_navigation.hpp`: native gamepad-to-ImGui input bridge.
 * `src/platform/desktop.cpp`: GLFW window, Vulkan swapchain and application loop.
 
-Video upload is currently synchronous and relies on host-visible linear-tiled
-Vulkan images. This is a compatibility/performance limitation; devices without
-the required linear image format features may need a staging-buffer and
-optimal-tiling implementation. Decode runs on the UxPlay callback thread;
-the UI reads a snapshot of the latest available frame, not a queued history.
+Video upload uses a host-visible staging buffer with
+`vkCmdCopyBufferToImage` into an optimal-tiled GPU sampled image. Upload still
+waits for GPU completion on each new frame; asynchronous transfer and frame
+latency measurements remain future performance work. Decode runs on the UxPlay
+callback thread; the UI reads a snapshot of the latest available frame.
+
+For UI integration independently of desktop or console networking use
+`cmake -S . -B build-ui -DMIRRORPSX_UI_ONLY=ON` to compile `mirror_screen`.
+For both the screen and real ImGui Vulkan backend, without GLFW or UxPlay,
+use `-DMIRRORPSX_VULKAN_UI_ONLY=ON` to compile `mirror_ui`. Both modes
+also build the UI tests and accept `-DMIRRORPSX_IMGUI_DIR=...` for offline
+builds. These modes are **components**, not PS5 executable targets.
 
 ## Known limitations / next steps
 
 * Verify real-world AirPlay discovery, pairing, reconnection, H.264 and HEVC.
-* Improve frame upload with persistent staging buffers and GPU synchronization.
+* Improve frame upload with GPU fences and asynchronous frame staging to avoid
+  the current queue/device idle waits.
+* Build and verify a separate native PS5 host and full AirPlay runtime.
 * Implement supported audio handling if the scope expands to audio reception.
 * Complete platform builds, Windows packaging, automated CI and lifecycle tests.
 * Replace the fixed receiver identity and port scheme with configurable settings

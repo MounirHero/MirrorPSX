@@ -12,9 +12,16 @@ class VideoTexture {
     VkImageView view_=VK_NULL_HANDLE;
     VkSampler sampler_=VK_NULL_HANDLE;
     VkDescriptorSet descriptor_=VK_NULL_HANDLE;
+    VkBuffer upload_buffer_=VK_NULL_HANDLE;
+    VkDeviceMemory upload_memory_=VK_NULL_HANDLE;
+    VkDeviceSize upload_capacity_=0;
+    VkCommandPool command_pool_=VK_NULL_HANDLE;
+    VkCommandBuffer command_=VK_NULL_HANDLE;
     int width_=0, height_=0;
     bool initialized_=false;
     void destroy_image();
+    void destroy_upload();
+    bool prepare_upload(VkDeviceSize size, uint32_t family);
 public:
     VideoTexture(VkPhysicalDevice physical,VkDevice device):physical_(physical),device_(device) {}
     ~VideoTexture();
