@@ -14,6 +14,7 @@ int main() {
     assert(mirror::make_screen_model(s, false).phase == mirror::ScreenPhase::connected);
     s.pin="2468";
     assert(mirror::make_screen_model(s, false).phase == mirror::ScreenPhase::pairing);
+    assert(!mirror::make_screen_model(s, true).allow_fullscreen);
     s.pin.clear(); s.width=1920; s.height=1080; s.frames=42;
     assert(mirror::make_screen_model(s, false).phase == mirror::ScreenPhase::connected);
     const auto live=mirror::make_screen_model(s, true);

@@ -19,9 +19,17 @@
 #include "platform/video_texture.hpp"
 #include "receiver/airplay.hpp"
 #include "ui/screen.hpp"
+#include "ui/icons.hpp"
 #include <stdio.h>          // printf, fprintf
 #include <stdlib.h>         // abort
 #include <memory>
+#include <filesystem>
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #define GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -355,6 +363,19 @@ static void FramePresent(ImGui_ImplVulkanH_Window* wd)
 // Main code
 int main(int, char**)
 {
+#if defined(_WIN32)
+    // GLFW and ImGui must agree on *physical* window dimensions. Without a
+    // DPI-aware process Windows may report a 3840-wide virtual window on a
+    // 2560-wide 150% monitor, clipping the entire right side (including PIN).
+    // Resolve dynamically: some MinGW SDK builds do not expose the declaration
+    // even though the function is available on Windows 10/11.
+    using SetDpiContextFn = BOOL (WINAPI*)(HANDLE);
+    const auto set_dpi_context = reinterpret_cast<SetDpiContextFn>(
+        GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetProcessDpiAwarenessContext"));
+    if (!set_dpi_context ||
+        !set_dpi_context(reinterpret_cast<HANDLE>(static_cast<intptr_t>(-4))))
+        SetProcessDPIAware(); // Fallback for older Windows builds.
+#endif
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit())
         return 1;
@@ -393,12 +414,27 @@ int main(int, char**)
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
-    // The scalable embedded font works at television viewing distances and
-    // does not require a desktop-system font on a prospective console port.
-    io.Fonts->AddFontDefaultVector();
+    // Licensed app assets are shared with the future console host.
+    // No dependency on platform-installed Segoe/SF/other proprietary fonts.
+    std::filesystem::path assets_root = "assets/fonts";
+    if (!std::filesystem::exists(assets_root / "Figtree-400.ttf")) {
+#if defined(_WIN32)
+        wchar_t executable[MAX_PATH]{};
+        if (GetModuleFileNameW(nullptr, executable, MAX_PATH) != 0)
+            assets_root = std::filesystem::path(executable).parent_path() / "assets/fonts";
+#endif
+    }
+    const std::string regular_path = (assets_root / "Figtree-400.ttf").string();
+    const std::string semibold_path = (assets_root / "Figtree-650.ttf").string();
+    const std::string icon_path = (assets_root / "fa-solid-900.ttf").string();
+    ImFont* regular_font = io.Fonts->AddFontFromFileTTF(regular_path.c_str(), 26.0f);
+    if (!regular_font) regular_font = io.Fonts->AddFontDefaultVector();
+    ImFont* semibold_font = io.Fonts->AddFontFromFileTTF(semibold_path.c_str(), 26.0f);
+    if (!semibold_font) semibold_font = regular_font;
+    ImFont* icon_font = io.Fonts->AddFontFromFileTTF(icon_path.c_str(), 30.0f, nullptr, mirror::icons::font_ranges);
 
     // Setup Dear ImGui style
-    mirror::apply_screen_style();
+    mirror::apply_screen_style(regular_font, semibold_font, icon_font);
     //ImGui::StyleColorsLight();
 
     // Setup Platform/Renderer backends
@@ -475,6 +511,20 @@ int main(int, char**)
         // Start the Dear ImGui frame
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
+        static int logged_w = -1, logged_h = -1;
+        if (std::getenv("MIRRORPSX_DIAGNOSTICS")) {
+            int ww = 0, wh = 0, fw = 0, fh = 0;
+            float sx = 0, sy = 0;
+            glfwGetWindowSize(window, &ww, &wh);
+            glfwGetFramebufferSize(window, &fw, &fh);
+            glfwGetWindowContentScale(window, &sx, &sy);
+            if (ww != logged_w || wh != logged_h) {
+                std::fprintf(stderr, "MIRROR_DIAG window=%dx%d framebuffer=%dx%d scale=%.3f,%.3f imgui=%.1fx%.1f fb_scale=%.2f,%.2f\n",
+                    ww, wh, fw, fh, sx, sy, io.DisplaySize.x, io.DisplaySize.y,
+                    io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
+                logged_w = ww; logged_h = wh;
+            }
+        }
         ImGui::NewFrame();
 
         // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).

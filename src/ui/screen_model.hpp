@@ -14,6 +14,11 @@ struct ScreenUiState {
     bool focus_primary = true;
     bool focus_fullscreen = false;
     bool confirm_stop = false;
+    bool help_open = false;
+    bool reduced_motion = false;
+    float primary_glow = 0.0f;
+    float help_glow = 0.0f;
+    float fullscreen_glow = 0.0f;
 };
 
 struct ScreenModel {
@@ -35,7 +40,8 @@ inline ScreenModel make_screen_model(const Snapshot& status, bool uploaded_video
     model.width = status.width;
     model.height = status.height;
     model.has_video = status.listening && uploaded_video && status.width > 0 && status.height > 0;
-    model.allow_fullscreen = model.has_video;
+    // A pairing request must have priority over video/fullscreen controls.
+    model.allow_fullscreen = model.has_video && status.pin.empty();
     model.can_start = !status.listening;
 
     if (!status.listening && !status.error.empty()) {

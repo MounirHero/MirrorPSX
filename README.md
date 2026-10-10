@@ -17,6 +17,9 @@ The GLFW desktop host is **not** a PS5 application. The UI and Vulkan renderer
 are compiled separately so a native PS5 display/input host can reuse them;
 there is no verified native PS5 ELF or package yet. See
 [PS5 porting status](docs/PS5_PORT.md).
+The design uses bundled Figtree typography, Font Awesome Free vector icon
+glyphs, and native DualSense controller symbols, with licenses documented in
+[UI assets](docs/ASSETS.md).
 
 ## Build on Windows (MSYS2 MinGW64)
 
@@ -46,11 +49,23 @@ The program advertises the name `MirrorPSX` using mDNS and displays the
 pairing PIN when requested. Stop/Start controls manage the receiver. Pairing
 state is written to `mirrorpsx.key` in the working directory; keep that file
 private and persist it across restarts when you want to retain the identity.
-The receiver currently attempts fixed TCP/UDP ports 7100–7104; allow the
-relevant traffic and mDNS through the host firewall. Windows socket error
-`10013` means access was denied to a socket, commonly because of endpoint
-protection, firewall policy or a reserved/excluded port range. It must be
-investigated on the target host rather than treated as successful discovery.
+The receiver asks the OS for free TCP/UDP ports, then advertises the selected
+AirPlay service port over mDNS. Earlier builds hard-coded ports 7100–7104,
+which overlapped a Windows excluded-port range and produced socket error
+`10013`. The dynamic-port fix has been confirmed to initialize the listener
+on the test Windows machine. Allow the advertised AirPlay port, negotiated
+stream ports and multicast DNS through any host/network firewall.
+
+For a new connection requesting PIN authentication, **the four-digit code is
+displayed in a centered modal overlay** on the receiving computer. Keep this
+window visible and enter the digits (including leading zeros) on the Apple
+device. The PIN persists across temporary RTSP socket closes and disappears
+when pairing/streaming succeeds or the receiver is stopped. If the code never
+appears, consult [pairing troubleshooting](docs/PAIRING.md).
+
+The Windows desktop host requests Per-Monitor V2 DPI awareness before creating
+its GLFW window. This avoids the Windows 150%-scaling mismatch that previously
+caused the right half of the UI (and PIN) to render outside the visible window.
 
 ## Architecture
 
@@ -81,7 +96,8 @@ builds. These modes are **components**, not PS5 executable targets.
 
 ## Known limitations / next steps
 
-* Verify real-world AirPlay discovery, pairing, reconnection, H.264 and HEVC.
+* Further exercise device pairing, password failure/retry, reconnect cycles,
+  prolonged H.264/HEVC sessions and multi-client contention on physical devices.
 * Improve frame upload with GPU fences and asynchronous frame staging to avoid
   the current queue/device idle waits.
 * Build and verify a separate native PS5 host and full AirPlay runtime.

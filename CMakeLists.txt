@@ -62,6 +62,13 @@ target_include_directories(mirror_receiver PUBLIC src PRIVATE third_party/uxplay
 target_link_libraries(mirror_receiver PUBLIC airplay PkgConfig::AV)
 add_executable(MirrorPSX src/platform/desktop.cpp ${IMGUI}/backends/imgui_impl_glfw.cpp)
 target_link_libraries(MirrorPSX PRIVATE mirror_ui mirror_receiver glfw)
+# Keep legally attributed icon/font resources available when launching the
+# executable directly from the build directory, not only from the repo root.
+add_custom_command(TARGET MirrorPSX POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/assets"
+        "$<TARGET_FILE_DIR:MirrorPSX>/assets"
+    VERBATIM)
 if(BUILD_TESTING)
     add_executable(decoder_test tests/decoder_test.cpp src/receiver/decoder.cpp)
     target_include_directories(decoder_test PRIVATE src)

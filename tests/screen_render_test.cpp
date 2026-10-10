@@ -17,7 +17,7 @@ int main() {
     mirror::apply_screen_style();
     mirror::ScreenUiState ui;
     mirror::Snapshot status;
-    const ImVec2 sizes[] = {{1280, 720}, {1920, 1080}, {3840, 2160}};
+    const ImVec2 sizes[] = {{1280, 720}, {1920, 1080}, {2560, 1400}, {3840, 2160}};
     for (const auto size : sizes) {
         io.DisplaySize = size;
         io.DeltaTime = 1.f / 60.f;
@@ -27,6 +27,28 @@ int main() {
         assert(ImGui::GetDrawData() && ImGui::GetDrawData()->Valid);
         assert(ImGui::GetDrawData()->TotalVtxCount > 0);
     }
+    // The actual four-digit callback value, including leading zeroes, must
+    // cause a center-screen blocking overlay even before a video frame exists.
+    status.listening = true;
+    status.connected = true;
+    status.pin = "0047";
+    for (const auto size : sizes) {
+        io.DisplaySize = size;
+        io.DeltaTime = 1.f / 60.f;
+        ImGui::NewFrame();
+        assert(mirror::make_screen_model(status, false).phase == mirror::ScreenPhase::pairing);
+        assert(mirror::render_screen(status, ImTextureID_Invalid, 0, 0, ui) == mirror::ScreenAction::none);
+        assert(ImGui::IsPopupOpen("Pairing code##mirror"));
+        ImGui::Render();
+        assert(ImGui::GetDrawData()->Valid);
+        assert(ImGui::GetDrawData()->TotalVtxCount > 0);
+    }
+    status.pin.clear();
+    io.DeltaTime = 1.f / 60.f;
+    ImGui::NewFrame();
+    mirror::render_screen(status, ImTextureID_Invalid, 0, 0, ui);
+    assert(!ImGui::IsPopupOpen("Pairing code##mirror"));
+    ImGui::Render();
     // The presentation is independent from Vulkan surface creation and remains
     // drawable with a simulated image handle in fullscreen mode.
     status.listening = status.connected = true;
