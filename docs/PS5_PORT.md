@@ -2,6 +2,32 @@
 
 ## Verified versus planned
 
+### Runtime diagnostics / pairing hardening (2026-10-11)
+
+The isolated `runtime-03-diagnostic` PS5 UI-only package now logs startup
+checkpoints for the identity bridge, RADV/Volk, Vulkan instance, GPU vendor and
+device IDs, queue family, swapchain, fonts, ImGui and first frame **submission**.
+It writes to `stderr` and attempts `sceKernelDebugOutText(0, ...)` when that
+optional libkernel import resolves. The ELF links successfully with this
+import, but its delivery to klogsrv on a real application is **not yet
+verified**. Display selection rejects modes above 3840x2160 instead of
+attempting an untested 8K presentation path. `runtime-03-diagnostic` passed
+PKG structural validation with zero errors and zero warnings.
+
+The full separate `airplay-exp-06-secure-pairing` profile also cross-compiles,
+links and passes PKG structural validation (0 errors, 0 warnings). Its vendored
+UxPlay crypto layer no longer derives an Ed25519 private key from the publicly
+known device ID when `keyfile=""`: it generates a random ephemeral keypair
+instead. Two no-keyfile initializations are checked to have different public
+keys by `ephemeral_pairing_test`. The Windows test suite now passes 7/7.
+Existing Windows users with a persisted `mirrorpsx.key` keep their previous
+identity behavior. Until PS5 app-private savedata is verified, PS5 clients
+must pair again after restarting the receiver. Randomness and OpenSSL keygen
+must still be tested on console; they are not guaranteed by cross-compilation.
+
+Neither diagnostic PKG has demonstrated PS5 installation, first visible frame
+or streaming. Only install a package through a known homebrew package manager.
+
 ### Native Vulkan UI milestone (October 2026)
 
 The native `src/platform/ps5_main.cpp` now **cross-compiles and links as an

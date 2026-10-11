@@ -352,7 +352,8 @@ ed25519_key_t *ed25519_key_generate(const char *device_id, const char *keyfile, 
     EVP_PKEY_CTX *pctx = NULL;
     BIO *bp = NULL;
     bool new_pk = false;
-    bool use_keyfile = strlen(keyfile);
+    bool use_keyfile = keyfile && keyfile[0];
+    (void)device_id;
 
     *result = 0;
 
@@ -371,15 +372,10 @@ ed25519_key_t *ed25519_key_generate(const char *device_id, const char *keyfile, 
             new_pk = true;
         }
     } else {
-        /* generate (insecure) persistent keypair using device_id */
-        unsigned char hash[SHA512_DIGEST_LENGTH] = {0};
-        char salt[] = SALT_PK;
-        sha_ctx_t *ctx = sha_init();
-        sha_update(ctx, (const unsigned char *) salt, (unsigned int) strlen(salt));
-        sha_update(ctx, (const unsigned char *) device_id, (unsigned int) strlen(device_id));
-        sha_final(ctx, hash, NULL);
-        sha_destroy(ctx);
-        key->pkey = EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, NULL, (const unsigned char *) hash, ED25519_KEY_SIZE);
+        /* No writable private key file: create an unpredictable *ephemeral*
+         * identity. Deriving a private key from the public device_id makes
+         * the receiver's identity forgeable, especially with a fixed ID. */
+        new_pk = true;
     }
 
     if (new_pk) {

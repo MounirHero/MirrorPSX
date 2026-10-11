@@ -71,8 +71,9 @@ bool AirPlay::start(const std::string& name) {
     },nullptr);
     // The PS5 application mount (/app0) is immutable. Until the app-private
     // savedata path is tested on hardware, avoid attempting to write a key
-    // beside the executable. UxPlay supports an ephemeral identity without
-    // a file, but already-paired clients must re-pair after each restart.
+    // beside the executable. Our UxPlay integration generates a random
+    // ephemeral Ed25519 key for an empty path (never a public-ID-derived key).
+    // Already-paired clients must re-pair after each restart.
 #if defined(MIRRORPSX_PS5_AIRPLAY)
     constexpr const char* key_file = "";
 #else

@@ -17,6 +17,7 @@
 #include <openprospero/input.hpp>
 #include <algorithm>
 #include <chrono>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -29,9 +30,24 @@ extern "C" {
     // nullable POSIX identity imports on PS5 firmware; validate the libkernel
     // syscall gateway before starting RADV or any worker threads.
     int hyperion_ps5_identity_initialize(const void* getpid_stub, pid_t expected_pid);
+    // The SDK's libkernel stub is optional in this application profile.
+    // Keep stderr for environments where the debug channel is unavailable.
+    int sceKernelDebugOutText(int channel, const char* text) __attribute__((weak));
 }
 
 namespace {
+void ps5_log(const char* format, ...) {
+    char message[512];
+    va_list arguments;
+    va_start(arguments, format);
+    const int written = std::vsnprintf(message, sizeof(message), format, arguments);
+    va_end(arguments);
+    if (written < 0) return;
+    std::fputs(message, stderr);
+    std::fflush(stderr);
+    if (sceKernelDebugOutText) sceKernelDebugOutText(0, message);
+}
+
 struct Ps5Vulkan {
     VkInstance instance{};
     VkPhysicalDevice physical{};
@@ -46,7 +62,7 @@ struct Ps5Vulkan {
 
     static bool ok(VkResult code, const char* what) {
         if (code == VK_SUCCESS || code == VK_SUBOPTIMAL_KHR) return true;
-        std::fprintf(stderr, "MirrorPSX PS5: %s failed: VkResult %d\n", what, int(code));
+        ps5_log("MirrorPSX PS5: %s failed: VkResult %d\n", what, int(code));
         return false;
     }
 
@@ -57,7 +73,7 @@ struct Ps5Vulkan {
             !vkGetDisplayPlaneSupportedDisplaysKHR ||
             !vkGetDisplayPlaneCapabilitiesKHR ||
             !vkCreateDisplayPlaneSurfaceKHR) {
-            std::fprintf(stderr, "MirrorPSX PS5: VK_KHR_display entrypoints unavailable\n");
+            ps5_log("MirrorPSX PS5: VK_KHR_display entrypoints unavailable\n");
             return false;
         }
         uint32_t count = 0;
@@ -92,6 +108,12 @@ struct Ps5Vulkan {
                     return uint64_t(pa.width) * pa.height > uint64_t(pb.width) * pb.height;
                 });
                 for (const auto& mode : modes) {
+                    // ImGui TV layout and the current render target are capped at 4K.
+                    // In particular, never auto-select a possible 8K display mode.
+                    if (!mode.parameters.visibleRegion.width ||
+                        !mode.parameters.visibleRegion.height ||
+                        mode.parameters.visibleRegion.width > 3840 ||
+                        mode.parameters.visibleRegion.height > 2160) continue;
                     for (uint32_t plane = 0; plane < plane_count; ++plane) {
                         uint32_t available = 0;
                         if (!ok(vkGetDisplayPlaneSupportedDisplaysKHR(gpu, plane, &available, nullptr),
@@ -121,6 +143,10 @@ struct Ps5Vulkan {
                         // not ImGui's first enumerated physical device.
                         uint32_t families = 0;
                         vkGetPhysicalDeviceQueueFamilyProperties(gpu, &families, nullptr);
+                        if (!families) {
+                            vkDestroySurfaceKHR(instance, surface, nullptr);
+                            continue;
+                        }
                         std::vector<VkQueueFamilyProperties> props(families);
                         vkGetPhysicalDeviceQueueFamilyProperties(gpu, &families, props.data());
                         for (uint32_t i = 0; i < families; ++i) {
@@ -133,8 +159,11 @@ struct Ps5Vulkan {
                                 window.Surface = surface;
                                 window.Width = int(sci.imageExtent.width);
                                 window.Height = int(sci.imageExtent.height);
-                                std::fprintf(stderr, "MirrorPSX PS5: display %dx%d\n",
-                                             window.Width, window.Height);
+                                VkPhysicalDeviceProperties gpu_props{};
+                                vkGetPhysicalDeviceProperties(gpu, &gpu_props);
+                                ps5_log("MirrorPSX PS5: selected GPU vendor=%04x device=%04x queue=%u display=%dx%d\n",
+                                        gpu_props.vendorID, gpu_props.deviceID, family,
+                                        window.Width, window.Height);
                                 return true;
                             }
                         }
@@ -143,12 +172,13 @@ struct Ps5Vulkan {
                 }
             }
         }
-        std::fprintf(stderr, "MirrorPSX PS5: no supported Vulkan display plane\n");
+        ps5_log("MirrorPSX PS5: no supported Vulkan display plane <=3840x2160\n");
         return false;
     }
 
     bool start() {
         // PS5 does not provide a host Vulkan loader. RADV supplies the ICD.
+        ps5_log("MirrorPSX PS5: initializing RADV/Volk ICD\n");
         volkInitializeCustom(vk_icdGetInstanceProcAddr);
         VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
         app.pApplicationName = "MirrorPSX";
@@ -162,6 +192,7 @@ struct Ps5Vulkan {
         ci.ppEnabledExtensionNames = instance_extensions;
         if (!ok(vkCreateInstance(&ci, nullptr, &instance), "instance")) return false;
         volkLoadInstance(instance);
+        ps5_log("MirrorPSX PS5: Vulkan instance initialized\n");
         if (!create_surface()) return false;
         const float priority = 1;
         VkDeviceQueueCreateInfo qi{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
@@ -177,6 +208,7 @@ struct Ps5Vulkan {
         if (!ok(vkCreateDevice(physical, &di, nullptr, &device), "device")) return false;
         volkLoadDevice(device);
         vkGetDeviceQueue(device, family, 0, &queue);
+        ps5_log("MirrorPSX PS5: graphics device/queue initialized\n");
         VkDescriptorPoolSize pool_sizes[] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 256}};
         VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         pool.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
@@ -194,9 +226,10 @@ struct Ps5Vulkan {
                                                nullptr, window.Width, window.Height, 2,
                                                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
         if (!window.RenderPass || !window.Swapchain) {
-            std::fprintf(stderr, "MirrorPSX PS5: failed to create Vulkan swapchain\n");
+            ps5_log("MirrorPSX PS5: failed to create Vulkan swapchain\n");
             return false;
         }
+        ps5_log("MirrorPSX PS5: Vulkan swapchain initialized, images=%u\n", window.ImageCount);
         initialized = true;
         return true;
     }
@@ -267,7 +300,7 @@ struct Ps5Vulkan {
 
     bool rebuild() {
         if (!swapchain_dirty) return true;
-        std::fprintf(stderr, "MirrorPSX PS5: recreating Vulkan swapchain\n");
+        ps5_log("MirrorPSX PS5: recreating Vulkan swapchain\n");
         if (!ok(vkDeviceWaitIdle(device), "swapchain device wait")) return false;
         ImGui_ImplVulkan_SetMinImageCount(2);
         ImGui_ImplVulkanH_CreateOrResizeWindow(instance, physical, device, &window,
@@ -300,7 +333,7 @@ bool load_ui_fonts(ImFont*& regular, ImFont*& strong, ImFont*& icons) {
     icons = atlas->AddFontFromFileTTF("/app0/assets/fonts/fa-solid-900.ttf", 30.0f,
                                       nullptr, mirror::icons::font_ranges);
     if (!regular || !strong || !icons) {
-        std::fprintf(stderr, "MirrorPSX PS5: font assets missing or unreadable\n");
+        ps5_log("MirrorPSX PS5: font assets missing or unreadable\n");
         return false;
     }
     return true;
@@ -309,14 +342,15 @@ bool load_ui_fonts(ImFont*& regular, ImFont*& strong, ImFont*& icons) {
 
 extern "C" int main() {
 #ifdef MIRRORPSX_PS5_AIRPLAY
-    std::fprintf(stderr, "MirrorPSX PS5: experimental Vulkan / AirPlay milestone\n");
+    ps5_log("MirrorPSX PS5: experimental Vulkan / AirPlay milestone\n");
 #else
-    std::fprintf(stderr, "MirrorPSX PS5: starting Vulkan UI-only milestone\n");
+    ps5_log("MirrorPSX PS5: starting Vulkan UI-only milestone\n");
 #endif
     if (hyperion_ps5_identity_initialize(reinterpret_cast<const void*>(getpid), getpid()) != 0) {
-        std::fprintf(stderr, "MirrorPSX PS5: libkernel identity initialization failed\n");
+        ps5_log("MirrorPSX PS5: libkernel identity initialization failed\n");
         return 1;
     }
+    ps5_log("MirrorPSX PS5: libkernel identity initialized\n");
     Ps5Vulkan graphics;
     if (!graphics.start()) {
         graphics.shutdown();
@@ -333,6 +367,7 @@ extern "C" int main() {
         return 2;
     }
     mirror::apply_screen_style(regular, bold, icons);
+    ps5_log("MirrorPSX PS5: UI fonts and style ready\n");
     ImGui_ImplVulkan_InitInfo info{};
     info.ApiVersion = VK_API_VERSION_1_1;
     info.Instance = graphics.instance;
@@ -346,11 +381,12 @@ extern "C" int main() {
     info.MinImageCount = 2;
     info.ImageCount = graphics.window.ImageCount;
     if (!ImGui_ImplVulkan_Init(&info)) {
-        std::fprintf(stderr, "MirrorPSX PS5: ImGui Vulkan backend initialization failed\n");
+        ps5_log("MirrorPSX PS5: ImGui Vulkan backend initialization failed\n");
         ImGui::DestroyContext();
         graphics.shutdown();
         return 3;
     }
+    ps5_log("MirrorPSX PS5: ImGui Vulkan backend initialized\n");
     mirror::Snapshot snapshot;
     snapshot.name = "MirrorPSX on PS5";
     snapshot.listening = false;
@@ -364,7 +400,7 @@ extern "C" int main() {
     mirror::ScreenUiState screen{};
     openprospero::ps5::GamePad controller;
     int pad_status = controller.open();
-    std::fprintf(stderr, "MirrorPSX PS5: scePad open result %d\n", pad_status);
+    ps5_log("MirrorPSX PS5: scePad open result %d\n", pad_status);
     auto previous = std::chrono::steady_clock::now();
     float exit_hold = 0.0f;
     bool first_frame = true;
@@ -372,7 +408,7 @@ extern "C" int main() {
     bool run = true;
     while (run) {
         if (!graphics.rebuild()) {
-            std::fprintf(stderr, "MirrorPSX PS5: swapchain recovery failed\n");
+            ps5_log("MirrorPSX PS5: swapchain recovery failed\n");
             break;
         }
         const auto now = std::chrono::steady_clock::now();
@@ -390,7 +426,7 @@ extern "C" int main() {
                 controller.close();
                 pad_status = controller.open();
                 if (pad_status < 0)
-                    std::fprintf(stderr, "MirrorPSX PS5: controller reopen failed %d\n", pad_status);
+                    ps5_log("MirrorPSX PS5: controller reopen failed %d\n", pad_status);
                 reconnect_frames = 0;
             }
         } else {
@@ -403,7 +439,7 @@ extern "C" int main() {
         else
             exit_hold = 0.0f;
         if (exit_hold >= 1.2f) {
-            std::fprintf(stderr, "MirrorPSX PS5: exit requested by OPTIONS hold\n");
+            ps5_log("MirrorPSX PS5: exit requested by OPTIONS hold\n");
             break;
         }
         mirror::GamepadNavigation pad{};
@@ -464,12 +500,12 @@ extern "C" int main() {
             IM_COL32(170, 185, 205, 240), hint);
         ImGui::Render();
         if (!graphics.present(ImGui::GetDrawData())) {
-            std::fprintf(stderr, "MirrorPSX PS5: presentation failed\n");
+            ps5_log("MirrorPSX PS5: presentation failed\n");
             run = false;
         }
         if (first_frame && graphics.last_frame_presented) {
             sceSystemServiceHideSplashScreen();
-            std::fprintf(stderr, "MirrorPSX PS5: first Vulkan frame presented\n");
+            ps5_log("MirrorPSX PS5: first Vulkan frame submitted for presentation\n");
             first_frame = false;
         }
     }

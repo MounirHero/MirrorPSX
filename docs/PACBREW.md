@@ -65,6 +65,15 @@ It starts/stops the receiver through the real UI action; pairing identity is
 ephemeral until a stable writable console location is tested. The experimental
 PacBrew ABI workaround is never added to the reference UI-only PKG.
 
+Security correction for the `airplay-exp-06-secure-pairing` build: UxPlay's
+previous empty-keyfile mode derived a reproducible Ed25519 private key from a
+public device ID. MirrorPSX now generates an unpredictable in-memory key in
+that case. A new Windows `ephemeral_pairing` unit test confirms distinct
+public keys across repeated initializations using the same device ID. PS5
+OpenSSL RNG and key generation are **not** yet hardware-verified. A private
+savedata-backed identity should replace ephemeral keys once its location and
+permissions have been established on the console.
+
 Verify the codec probe on authorized PS5 hardware before linking it into the
 full UI title. The application sandbox's access to mDNS multicast and RTSP/
 RTP sockets remains unverified. Introduce an OpenProspero companion broker
