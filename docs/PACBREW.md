@@ -1,0 +1,66 @@
+# PacBrew decoder bring-up on OpenProspero
+
+The first MirrorPSX native PS5 PKG renders the genuine Vulkan/ImGui UI without
+starting a receiver. The next independent dependency gate is a **link-only**
+H.264/HEVC decoding probe, using prebuilt libraries from the upstream
+[PacBrew package repository](https://github.com/ps5-payload-dev/pacbrew-repo).
+
+## Pinned third-party build
+
+- Release: `v0.40.2`
+- Asset: `ps5-payload-dev.tar.gz`
+- SHA-256:
+  `a85f65de418a8e6a898c6c3e3c870d50fff7618a200e4dd59ea9692af6ecec4d`
+- Prefix **inside** archive: `opt/ps5-payload-sdk/target/user/homebrew/`
+- The extraction target must stay in a separate ignored build directory.
+  **Never** overwrite OpenProspero's own `sdk/target` with the PacBrew image.
+
+On the Windows development machine, the downloaded asset was hash-verified
+and the selected header directories and static archives were extracted under
+`build-pacbrew/selected/` (ignored by Git). Only the following libraries were
+required for the first codec link: `avcodec`, `swscale`, `avutil`,
+`swresample`, `x264`, `lzma`, `iconv`, `ssl`, `crypto` and `z`, plus
+the already-used Hyperion PS5 platform/builtins archives.
+
+## Reproducible link-only probe
+
+```powershell
+$ports = 'build-pacbrew/selected/opt/ps5-payload-sdk/target/user/homebrew'
+./scripts/build-pacbrew-codec-probe.ps1 -PortsRoot $ports -Probe
+./scripts/build-pacbrew-codec-probe.ps1 -PortsRoot $ports `
+  -OutputRoot build-ps5-codec-probe-release
+```
+
+This script cross-compiles the real `src/receiver/decoder.cpp` and
+`tests/ps5_codec_probe.cpp`, and links an OpenProspero application
+`codec-probe.elf`. The entry point attempts to open H.264 and HEVC decoders
+sequentially. Successful compilation and linking **do not prove** either
+decoder opens, receives frames or renders video on a physical PS5.
+
+The first link exposed differences between the PacBrew payload SDK and the
+OpenProspero application ABI: the FreeBSD `___mb_cur_max` data symbol and a
+missing `arc4random_buf` mapping. The independent probe currently supplies
+a **test-only** constant multibyte-width symbol and binds
+`arc4random_buf` to the existing `ps5_arc4random_buf` Hyperion platform
+implementation. This is deliberately marked experimental; it cannot be used
+as evidence of runtime ABI compatibility and **must not be silently added to
+the MirrorPSX production PKG**.
+
+The probe uses the upstream static archives with their original licenses,
+which must be audited before distribution in an AirPlay-enabled title.
+
+## Remaining dependencies / actual console gates
+
+UxPlay requires `libplist` as well as FFmpeg/OpenSSL and DNS-SD/Bonjour.
+The examined PacBrew image contains the FFmpeg and OpenSSL archives but does
+**not** contain a libplist archive. Port and validate libplist separately,
+then cross-compile UxPlay with console-safe libc, sockets, threads and file
+system paths.
+
+Verify the codec probe on authorized PS5 hardware before linking it into the
+full UI title. The application sandbox's access to mDNS multicast and RTSP/
+RTP sockets remains unverified. Introduce an OpenProspero companion broker
+only for operations demonstrated to require capabilities outside the sandbox,
+using the SDK's established companion protocol. Add actual first-frame,
+H.264/HEVC decoding, reconnect and latency tests before advertising AirPlay
+as available on PS5.

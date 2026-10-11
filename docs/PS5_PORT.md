@@ -2,11 +2,35 @@
 
 ## Verified versus planned
 
-MirrorPSX does **not** yet have a native PS5 application binary. The existing
-`src/platform/desktop.cpp` owns a GLFW window and MUST NOT be compiled as the
-PS5 host. The **screen UI** and **Vulkan graphics code** can be compiled as
-independent targets, allowing a separate native host to supply a PS5 display,
-input, and filesystem.
+### Native Vulkan UI milestone (October 2026)
+
+The native `src/platform/ps5_main.cpp` now **cross-compiles and links as an
+OpenProspero x86-64 PS5 application ELF** using the RADV and platform archives
+already built for Hyperion. This is MirrorPSX's real Dear ImGui Vulkan
+renderer and screen composition, not a web frontend and not Hyperion's
+unrelated UI renderer. It uses `VK_KHR_display` to obtain a console surface,
+creates the graphics queue and swapchain, initializes Dear ImGui's Vulkan
+backend, reads DualSense via `openprospero::ps5::GamePad`, and renders the
+existing UI with bundled Figtree/Font Awesome fonts. Hold OPTIONS for 1.2
+seconds to exit.
+
+An experimental OpenProspero PKG was produced with an `eboot.bin`, the fonts
+and a locally verified source-built `sce_module/libc.prx`. `prospero validate`
+reported zero structural errors and warnings; `prospero extract` confirmed
+the payload and asset inventory. **The console has not yet verified that it
+installs, starts, displays a frame or responds to DualSense.** Package
+structure, ELF linking and working GPU execution are separate milestones.
+
+The first PKG deliberately runs in **UI-only mode**; no AirPlay service is
+advertised and there is no decoder or audio pipeline on the console. Pressing
+Start receiver reports that networking is not built into this version. The
+Windows application's manually tested iPad pairing and Vulkan mirroring are
+unchanged.
+
+The existing `src/platform/desktop.cpp` owns a GLFW window and MUST NOT be
+compiled as the PS5 host. `src/platform/ps5_main.cpp` is the separate PS5
+host and deliberately does not link GLFW, Win32 WSI, FFmpeg or UxPlay. Its
+compile/link success is not a physical-console validation.
 
 The automated tests performed so far are Windows/MinGW64. The project owner
 has manually confirmed iPad PIN pairing and streaming into the Windows Vulkan
@@ -87,10 +111,27 @@ the host-only CTest executables are not console payloads.
    mirroring, reconnection, texture resize, presentation after suspend,
    reliable shutdown and GPU validation/performance.
 
-The local Hyperion development environment contains a Vulkan PS5 display
-implementation and native DualSense input mapping, and PS5_Vulkan/RADV exists.
-Those are reference implementations, **not** dependencies silently included in
-MirrorPSX or proof of this application's compatibility.
+The Hyperion development environment supplied reference-tested
+`VK_KHR_display`, RADV ICD initialization, OpenProspero pad mapping and
+identity-syscall guards. The build currently reuses Hyperion's pinned RADV and
+platform archives plus its SDK-compatible identity wrapper, without copying
+Hyperion's GUI or moving unrelated runtime code into MirrorPSX.
+These references are not proof of this application's console compatibility.
+
+### PacBrew dependency boundary
+
+PacBrew's PS5 ports include FFmpeg, OpenSSL and networking/codec libraries
+useful for a future AirPlay-capable runtime. A PacBrew package compiled for
+ps5-payload-sdk must not be assumed ABI-compatible with the OpenProspero
+*application-profile* ELF. Import it only into a separate, version-pinned
+dependency prefix, inspect symbol dependencies, and link a minimal RTSP/codec
+probe before enabling a live receiver. OS-level multicast DNS, UDP socket
+binding, writable identity storage and companion privileges all require
+actual-console tests. The companion is not needed to draw the Vulkan UI.
+As a concrete step, the pinned PacBrew v0.40.2 H.264/HEVC decoder probe now
+cross-compiles and links as an application-profile ELF. It uses a **test-only**
+libiconv ABI shim and has not run on console. Details and provenance:
+[PacBrew bring-up](PACBREW.md).
 
 ## UX and navigation specification
 
@@ -120,7 +161,11 @@ corrupted video.
 
 ## Port completion gates
 
-**Not yet satisfied:** PS5 cross-compile of all dependencies, native Vulkan
-host integration, PS5 ELF/PKG packaging, physical-console first-frame test,
-real AirPlay pairing/streaming, GPU validation, and controller usability testing.
-Keep these unverified until there is tangible evidence from a PS5 run.
+**Completed off-device:** native host and UI cross-compilation, PS5 ELF link,
+experimental PKG generation and extraction, package structural verification,
+Windows AirPlay/iPad mirroring and Windows UI regression suite.
+
+**Not yet satisfied:** physical PS5 PKG install/first-frame test, Vulkan device
+validation, controller usability test, console-native UxPlay/FFmpeg/OpenSSL
+integration, companion network broker where required, actual AirPlay pairing/
+streaming from the PS5 target and low-latency frame synchronization on-console.

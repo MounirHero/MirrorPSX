@@ -16,12 +16,34 @@ project owner:** PIN pairing and screen mirroring from an iPad to the Windows
 Vulkan application work. This is not equivalent to automated device testing
 or a completed PS5 port.
 The GLFW desktop host is **not** a PS5 application. The UI and Vulkan renderer
-are compiled separately so a native PS5 display/input host can reuse them;
-there is no verified native PS5 ELF or package yet. See
+are compiled separately. A native OpenProspero `src/platform/ps5_main.cpp`
+host now cross-compiles and links using Hyperion's pinned PS5 RADV and
+`VK_KHR_display` infrastructure. An experimental UI-only PKG has passed
+OpenProspero **structural** validation; it has **not** yet been confirmed to
+install or display a frame on physical PS5 hardware. See
 [PS5 porting status](docs/PS5_PORT.md).
 The design uses bundled Figtree typography, Font Awesome Free vector icon
 glyphs, and native DualSense controller symbols, with licenses documented in
 [UI assets](docs/ASSETS.md).
+
+### Native PS5 build (experimental)
+
+The separate `scripts/build-ps5.ps1` compiles the actual MirrorPSX Dear ImGui
+Vulkan screen with the PS5 host, links an OpenProspero application ELF,
+packages its fonts and licenses, and invokes `prospero validate`. Supply
+the OpenProspero SDK, the pinned RADV/platform/builtins archives, and a locally
+verified source-built `libc.prx`. Run with `-Probe` first to check every
+prerequisite without creating or replacing outputs. Build outputs stay under
+`build-ps5-package/` and are ignored by Git.
+
+**The PS5 PKG is currently UI-only**: its Start receiver action reports
+that AirPlay networking has not yet been integrated. It does not contain
+FFmpeg, UxPlay, SSL or a network companion. DualSense focus/navigation and
+Vulkan startup require a first physical-console test. Windows AirPlay/iPad
+streaming is unaffected.
+The separately compiled [PacBrew codec link probe](docs/PACBREW.md) confirms
+an initial route to a PS5 FFmpeg decoder but remains experimental and is not
+bundled in the UI-only package.
 
 ## Build on Windows (MSYS2 MinGW64)
 
