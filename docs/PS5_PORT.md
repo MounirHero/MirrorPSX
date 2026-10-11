@@ -8,7 +8,10 @@ PS5 host. The **screen UI** and **Vulkan graphics code** can be compiled as
 independent targets, allowing a separate native host to supply a PS5 display,
 input, and filesystem.
 
-The tests performed so far are Windows/MinGW64. The standalone `mirror_screen`
+The automated tests performed so far are Windows/MinGW64. The project owner
+has manually confirmed iPad PIN pairing and streaming into the Windows Vulkan
+host, but **no PS5-specific runtime validation** has been performed.
+The standalone `mirror_screen`
 and `mirror_ui` targets compile and the UI simulation passes at 1280x720,
 1920x1080 and 3840x2160; this does *not* establish successful execution on PS5.
 

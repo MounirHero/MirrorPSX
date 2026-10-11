@@ -32,11 +32,17 @@ zeros at 1280×720, 1920×1080, 2560×1400 and 3840×2160. It verifies popup
 activation, frame geometry validity, and closure when `Snapshot::pin` clears.
 The PIN shown in that test is **synthetic**, not a device's actual pairing PIN.
 
-During Windows runtime investigation, an RTSP `/pair-pin-start` request
-reached the UxPlay handler and generated a PIN. The test machine subsequently
-rendered **actual decoded Apple-device video** over Vulkan. This validates
-basic AirPlay reception but does not constitute a complete suite of physical
-device pairing/retry tests. Runtime logs intentionally redact generated PINs.
+The owner subsequently confirmed **successful PIN pairing and video mirroring
+from an iPad** against the Windows Vulkan application. This is manual
+end-to-end evidence, not an automated hardware test and not a PS5 validation.
+Runtime logs intentionally redact generated PINs.
+
+The `pairing_protocol` test now sends a real RTSP `/pair-pin-start` request
+over localhost and verifies that UxPlay emits a four-digit PIN. It also checks
+that closing a short-lived connection does not discard the displayed code.
+The `receiver_lifecycle` test verifies that terminating video transport
+clears the old frame and transitions away from a stale LIVE display while
+preserving the still-connected receiver state.
 
 ## If pairing still fails
 

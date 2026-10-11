@@ -42,6 +42,12 @@ void VideoTexture::destroy_upload() {
 }
 
 VideoTexture::~VideoTexture() {
+    clear();
+}
+
+void VideoTexture::clear() {
+    if (!image_ && !memory_ && !view_ && !sampler_ && !descriptor_ &&
+        !upload_buffer_ && !upload_memory_ && !command_pool_) return;
     if (device_) vkDeviceWaitIdle(device_);
     destroy_image();
     destroy_upload();

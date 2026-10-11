@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "receiver/state.hpp"
+#include "receiver/connection_tracker.hpp"
 #include <cassert>
 #include <cstdint>
 #include <thread>
@@ -42,5 +43,28 @@ int main() {
     writer.join();
     assert(state.snapshot().frames == 257);
     assert(state.frame_after(1, output));
+
+    // Pairing and mirroring may use different sockets. The PIN must survive
+    // closure of either connection and no premature disconnection is shown.
+    mirror::ConnectionTracker connections;
+    connections.opened(state);
+    connections.opened(state);
+    state.update([](auto& s) {
+        s.pin = "0047";
+        s.client = "Test client";
+    });
+    connections.closed(state);
+    assert(connections.active() == 1);
+    assert(state.snapshot().connected);
+    assert(state.snapshot().pin == "0047");
+    connections.closed(state);
+    assert(connections.active() == 0);
+    assert(!state.snapshot().connected);
+    assert(state.snapshot().pin == "0047");
+    assert(state.snapshot().client.empty());
+    connections.closed(state);  // Defensive: spurious teardown cannot underflow.
+    assert(connections.active() == 0);
+    connections.reset(state);
+    assert(connections.active() == 0);
     assert(output.sequence == 257);
 }

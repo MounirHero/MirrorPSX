@@ -11,8 +11,10 @@ draws through Vulkan (Dear ImGui's Vulkan backend), **not a WebView or a mocked
 console screen**. It features a TV-readable, responsive player, controller
 focus navigation, receiver controls, connection status, pairing PIN, fullscreen
 presentation, and confirmation before disconnecting.
-Decoder/state/UI tests run under CTest. Real device-to-device streaming and
-pairing require validation with Apple clients on a LAN.
+Decoder/state/UI tests run under CTest. **Manual validation reported by the
+project owner:** PIN pairing and screen mirroring from an iPad to the Windows
+Vulkan application work. This is not equivalent to automated device testing
+or a completed PS5 port.
 The GLFW desktop host is **not** a PS5 application. The UI and Vulkan renderer
 are compiled separately so a native PS5 display/input host can reuse them;
 there is no verified native PS5 ELF or package yet. See
@@ -67,10 +69,18 @@ The Windows desktop host requests Per-Monitor V2 DPI awareness before creating
 its GLFW window. This avoids the Windows 150%-scaling mismatch that previously
 caused the right half of the UI (and PIN) to render outside the visible window.
 
+For reproducible UI review, launch `MirrorPSX.exe --preview-pairing`. This
+starts a **local, synthetic PIN preview** (`0047`) using the genuine Vulkan
+renderer. It does not start or advertise a receiver and must not be used as
+an actual authentication code. It can run without interrupting an existing
+AirPlay session in another MirrorPSX instance.
+
 ## Architecture
 
 * `src/receiver/airplay.*`: RAOP callback bridge, advertisements and session
   lifecycle; imported UxPlay code is confined to `third_party/uxplay`.
+* `src/receiver/connection_tracker.hpp`: tracks multiple active RTSP sockets
+  without prematurely clearing pairing information or disconnecting the UI.
 * `src/receiver/decoder.*`: FFmpeg codec selection and decoded RGBA output.
 * `src/receiver/state.hpp`: mutex-protected connection state and latest frame.
 * `src/platform/video_texture.*`: Vulkan staging buffer, optimal-tiled GPU
@@ -96,8 +106,8 @@ builds. These modes are **components**, not PS5 executable targets.
 
 ## Known limitations / next steps
 
-* Further exercise device pairing, password failure/retry, reconnect cycles,
-  prolonged H.264/HEVC sessions and multi-client contention on physical devices.
+* Extend iPad manual validation to authentication failure/retry, reconnect
+  cycles, prolonged H.264/HEVC sessions and multi-client contention.
 * Improve frame upload with GPU fences and asynchronous frame staging to avoid
   the current queue/device idle waits.
 * Build and verify a separate native PS5 host and full AirPlay runtime.

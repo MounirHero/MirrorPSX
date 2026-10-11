@@ -11,20 +11,34 @@ AirPlay::~AirPlay() { stop(); }
 void AirPlay::video(const uint8_t* data,int size) { std::lock_guard lock(decode_mutex_); decoder_.push(data,size); }
 int AirPlay::codec(bool hevc) { std::lock_guard lock(decode_mutex_); return decoder_.open(hevc)?0:-1; }
 void AirPlay::flush() { std::lock_guard lock(decode_mutex_); decoder_.flush(); }
+void AirPlay::stream_running(bool running) {
+    if (running) {
+        state_.update([](auto& s) { s.pin.clear(); });
+    } else {
+        // Never leave a frozen last frame marked as LIVE after a stream ends.
+        flush();
+    }
+}
 bool AirPlay::start(const std::string& name) {
     stop();
     { std::lock_guard lock(decode_mutex_); if(!decoder_.open()) { state_.update([](auto& s){s.error="H.264 decoder unavailable";}); return false; } }
     raop_callbacks_t cb{}; cb.cls=this;
     cb.video_process=[](void* p,raop_ntp_t*,video_decode_struct* v){static_cast<AirPlay*>(p)->video(v->data,v->data_len);};
     cb.audio_process=[](void*,raop_ntp_t*,audio_decode_struct*){};
-    cb.conn_init=[](void* p){static_cast<AirPlay*>(p)->state().update([](auto& s){s.connected=true;});};
+    cb.conn_init=[](void* p){
+        auto* a=static_cast<AirPlay*>(p);
+        a->connections().opened(a->state());
+    };
     // Pairing can span more than one RTSP/TCP connection: clearing the PIN
     // whenever a socket closes makes it disappear before the user can type it.
-    cb.conn_destroy=[](void* p){auto* a=static_cast<AirPlay*>(p); a->flush(); a->state().update([](auto& s){s.connected=false;s.client.clear();});};
+    cb.conn_destroy=[](void* p){
+        auto* a=static_cast<AirPlay*>(p);
+        a->connections().closed(a->state());
+    };
     cb.report_client_request=[](void* p,char*,char*,char* name,bool* admit){ *admit=true; static_cast<AirPlay*>(p)->state().update([&](auto& s){s.client=name?name:"Dispositivo Apple";}); };
     cb.display_pin=[](void* p,char* pin){static_cast<AirPlay*>(p)->state().update([&](auto& s){s.pin=pin?pin:"";});};
     cb.mirror_video_running=[](void* p,bool running){
-        if(running) static_cast<AirPlay*>(p)->state().update([](auto& s){s.pin.clear();});
+        static_cast<AirPlay*>(p)->stream_running(running);
     };
     cb.video_set_codec=[](void* p,video_codec_t c){return static_cast<AirPlay*>(p)->codec(c==VIDEO_CODEC_H265);};
     cb.video_flush=[](void* p){static_cast<AirPlay*>(p)->flush();};
@@ -83,6 +97,7 @@ void AirPlay::stop() {
     if(server_) { raop_destroy(server_);server_=nullptr; }
     if(discovery_) { dnssd_destroy(discovery_);discovery_=nullptr; }
     flush();
+    connections_.reset(state_);
     state_.update([](auto& s){s.listening=false;s.connected=false;s.client.clear();s.pin.clear();});
 }
 }

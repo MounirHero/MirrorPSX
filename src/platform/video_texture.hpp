@@ -28,6 +28,9 @@ public:
     VideoTexture(const VideoTexture&)=delete;
     VideoTexture& operator=(const VideoTexture&)=delete;
     bool upload(VkQueue queue, uint32_t family, const VideoFrame& frame);
+    // Discard sampled video and CPU staging resources on stream teardown.
+    // Safe to call repeatedly; device/descriptor ownership stays with the host.
+    void clear();
     VkDescriptorSet descriptor() const { return descriptor_; }
     int width() const { return width_; }
     int height() const { return height_; }

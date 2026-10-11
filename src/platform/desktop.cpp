@@ -23,6 +23,7 @@
 #include <stdio.h>          // printf, fprintf
 #include <stdlib.h>         // abort
 #include <memory>
+#include <cstring>
 #include <filesystem>
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -361,8 +362,20 @@ static void FramePresent(ImGui_ImplVulkanH_Window* wd)
 }
 
 // Main code
-int main(int, char**)
+int main(int argc, char** argv)
 {
+    // Diagnostic mode draws the actual Vulkan UI with a synthetic pairing
+    // request, without advertising an AirPlay server or using a real PIN.
+    // This makes repeatable visual QA possible while another receiver runs.
+    bool preview_pairing = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--preview-pairing") == 0) {
+            preview_pairing = true;
+        } else {
+            std::fprintf(stderr, "Unknown argument: %s\n", argv[i]);
+            return 2;
+        }
+    }
 #if defined(_WIN32)
     // GLFW and ImGui must agree on *physical* window dimensions. Without a
     // DPI-aware process Windows may report a 3840-wide virtual window on a
@@ -382,7 +395,9 @@ int main(int, char**)
 
     // Create window with Vulkan context
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "MirrorPSX", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(1280, 720,
+        preview_pairing ? "MirrorPSX [Synthetic PIN Preview]" : "MirrorPSX",
+        nullptr, nullptr);
     if (!window) { glfwTerminate(); return 1; }
     if (!glfwVulkanSupported())
     {
@@ -477,7 +492,15 @@ int main(int, char**)
     ImVec4 clear_color = ImVec4(0.06f, 0.07f, 0.09f, 1.00f);
     mirror::State state;
     mirror::AirPlay receiver(state);
-    receiver.start();
+    if (preview_pairing) {
+        state.update([](mirror::Snapshot& status) {
+            status.name = "MirrorPSX UI Preview";
+            status.listening = true;
+            status.pin = "0047"; // Not an AirPlay authentication secret.
+        });
+    } else {
+        receiver.start();
+    }
     auto texture = std::make_unique<mirror::VideoTexture>(g_PhysicalDevice,g_Device);
     mirror::ScreenUiState screen_ui;
     uint64_t last_frame = 0;
@@ -527,7 +550,7 @@ int main(int, char**)
         }
         ImGui::NewFrame();
 
-        // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
+        // Consume the newest frame without blocking the receiver callback.
         mirror::VideoFrame next;
         if(state.frame_after(last_frame,next)) {
             last_frame=next.sequence;
@@ -535,6 +558,10 @@ int main(int, char**)
                 state.update([](auto& s){s.error="Video texture upload failed";});
         }
         const auto status=state.snapshot();
+        // The screen state and the Vulkan texture must agree. Otherwise an
+        // interrupted AirPlay session leaves the previous screen in GPU memory
+        // until a different resolution is uploaded or the app exits.
+        if (!status.width || !status.height) texture->clear();
         const auto handle = status.width && status.height
             ? static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(texture->descriptor()))
             : ImTextureID_Invalid;
