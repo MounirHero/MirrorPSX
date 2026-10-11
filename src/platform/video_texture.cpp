@@ -31,11 +31,14 @@ void VideoTexture::destroy_image() {
 }
 
 void VideoTexture::destroy_upload() {
+    if (upload_fence_) vkDestroyFence(device_, upload_fence_, nullptr);
     if (command_pool_) vkDestroyCommandPool(device_, command_pool_, nullptr);
     if (upload_buffer_) vkDestroyBuffer(device_, upload_buffer_, nullptr);
     if (upload_memory_) vkFreeMemory(device_, upload_memory_, nullptr);
     command_pool_ = VK_NULL_HANDLE;
     command_ = VK_NULL_HANDLE;
+    upload_fence_ = VK_NULL_HANDLE;
+    upload_in_flight_ = false;
     upload_buffer_ = VK_NULL_HANDLE;
     upload_memory_ = VK_NULL_HANDLE;
     upload_capacity_ = 0;
@@ -47,7 +50,7 @@ VideoTexture::~VideoTexture() {
 
 void VideoTexture::clear() {
     if (!image_ && !memory_ && !view_ && !sampler_ && !descriptor_ &&
-        !upload_buffer_ && !upload_memory_ && !command_pool_) return;
+        !upload_buffer_ && !upload_memory_ && !command_pool_ && !upload_fence_) return;
     if (device_) vkDeviceWaitIdle(device_);
     destroy_image();
     destroy_upload();
@@ -64,6 +67,10 @@ bool VideoTexture::prepare_upload(VkDeviceSize bytes, uint32_t family) {
         ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         ai.commandBufferCount = 1;
         if (vkAllocateCommandBuffers(device_, &ai, &command_) != VK_SUCCESS) return false;
+    }
+    if (!upload_fence_) {
+        VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        if (vkCreateFence(device_, &fi, nullptr, &upload_fence_) != VK_SUCCESS) return false;
     }
     if (upload_buffer_ && upload_capacity_ >= bytes) return true;
     if (upload_buffer_) vkDestroyBuffer(device_, upload_buffer_, nullptr);
@@ -96,13 +103,21 @@ bool VideoTexture::upload(VkQueue queue, uint32_t family, const VideoFrame& fram
         frame.width > 4096 || frame.height > 4096 ||
         frame.rgba.size() != size_t(frame.width) * size_t(frame.height) * 4u) return false;
 
-    // Conservative synchronous implementation: the GPU completes the previous
-    // draw before an old descriptor/image is recycled. Transfer resources and
-    // optimal-tiled GPU images are reused across successive video frames.
-    if (vkDeviceWaitIdle(device_) != VK_SUCCESS) return false;
+    // A fence protects reuse of the transfer command pool/staging buffer.
+    // Do not stall all queues or wait for this frame's transfer completion:
+    // the subsequent ImGui draw is submitted to the same graphics queue,
+    // and Vulkan ordering/barriers make the uploaded image visible to it.
+    if (upload_in_flight_) {
+        if (vkWaitForFences(device_, 1, &upload_fence_, VK_TRUE, UINT64_MAX) != VK_SUCCESS)
+            return false;
+        upload_in_flight_ = false;
+    }
     const auto bytes = VkDeviceSize(frame.rgba.size());
     if (!prepare_upload(bytes, family)) return false;
     if (width_ != frame.width || height_ != frame.height) {
+        // The *previous display draw* may still be sampling the old image.
+        // Replacing descriptors at a resolution change requires full quiescence.
+        if (vkDeviceWaitIdle(device_) != VK_SUCCESS) return false;
         destroy_image();
         VkFormatProperties format{};
         vkGetPhysicalDeviceFormatProperties(physical_, VK_FORMAT_R8G8B8A8_UNORM, &format);
@@ -203,8 +218,9 @@ bool VideoTexture::upload(VkQueue queue, uint32_t family, const VideoFrame& fram
     VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &command_;
-    if (vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS) return false;
-    if (vkQueueWaitIdle(queue) != VK_SUCCESS) return false;
+    if (vkResetFences(device_, 1, &upload_fence_) != VK_SUCCESS) return false;
+    if (vkQueueSubmit(queue, 1, &submit, upload_fence_) != VK_SUCCESS) return false;
+    upload_in_flight_ = true;
     initialized_ = true;
     return true;
 }

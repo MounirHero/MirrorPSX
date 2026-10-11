@@ -45,6 +45,14 @@ The separately compiled [PacBrew codec link probe](docs/PACBREW.md) confirms
 an initial route to a PS5 FFmpeg decoder but remains experimental and is not
 bundled in the UI-only package.
 
+An additional **experimental AirPlay-enabled PS5 package** can now be generated
+with the isolated `MPSX00002` build profile. It links UxPlay, libplist,
+OpenSSL and FFmpeg to the real native Vulkan host; its decoder, pairing and
+network sandbox behavior have not been tested on-console. Keep the UI-only
+`MPSX00001` package as the first install/launch checkpoint. See the
+[PS5 runtime evidence and installer procedure](docs/PS5_RUNTIME.md) and
+[PacBrew integration notes](docs/PACBREW.md).
+
 ## Build on Windows (MSYS2 MinGW64)
 
 Install the MinGW64 development packages for GCC, CMake, make, pkgconf,

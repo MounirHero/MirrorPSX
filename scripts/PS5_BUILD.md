@@ -43,3 +43,18 @@ supplied, compatible RADV/platform/builtins archives and Hyperion's native PS5
 identity wrappers. Vulkan display, controller navigation, installation and
 AirPlay operation still require physical-console testing: OpenProspero's
 `validate` command checks package structure, not execution or signing.
+
+## Experimental AirPlay profile
+
+The reference UI-only title remains `MPSX00001`. To build the separately
+identified `MPSX00002` profile, obtain the hash-verified PacBrew release and
+unmodified upstream libplist 2.7.0 source described in
+`../docs/PACBREW.md`. Call `build-ps5-airplay-experimental.ps1` with real
+SDK/RADV/platform archives, verified libc.prx, the PacBrew headers/libraries,
+and a fresh OutputSuffix. The orchestration builds libplist, UxPlay and
+codec link probes before producing the fully linked AirPlay/Vulkan PKG.
+It never replaces the UI-only title.
+
+The full receiver remains experimental: the PacBrew/libiconv ABI bridge,
+console sockets/mDNS, runtime decoding and optional companion permissions
+are not validated. First test UI-only installation and visible Vulkan frames.

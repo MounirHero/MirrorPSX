@@ -16,6 +16,10 @@ param(
     [string[]]$ExtraSources = @(),
     [string[]]$ExtraArchives = @(),
     [string[]]$ExtraIncludes = @(),
+    [string[]]$ExtraSystemIncludes = @(),
+    [string[]]$ExtraObjectFiles = @(),
+    [string[]]$ExtraDefines = @(),
+    [switch]$EnableAirPlay,
     [switch]$Probe,
     [switch]$StageOnly
 )
@@ -97,6 +101,11 @@ $SceSysDir = Full-Path $SceSysDir
 $ExtraSources = @($ExtraSources | ForEach-Object { Full-Path $_ })
 $ExtraArchives = @($ExtraArchives | ForEach-Object { Full-Path $_ })
 $ExtraIncludes = @($ExtraIncludes | ForEach-Object { Full-Path $_ })
+$ExtraSystemIncludes = @($ExtraSystemIncludes | ForEach-Object { Full-Path $_ })
+$ExtraObjectFiles = @($ExtraObjectFiles | ForEach-Object { Full-Path $_ })
+if ($EnableAirPlay -and (-not $ExtraSources -or -not $ExtraObjectFiles -or -not $ExtraArchives)) {
+    throw 'AirPlay profile requires explicit C++ sources, UxPlay C objects and dependency archives.'
+}
 
 $toolchain = Join-Path $SdkRoot '.tools\llvm-mingw-20240619-ucrt-x86_64\bin'
 $clang = Join-Path $toolchain 'clang.exe'
@@ -139,6 +148,8 @@ Require-File 'Platform archive (-PlatformArchive)' $PlatformArchive
 Require-File 'Compiler builtins (-BuiltinsArchive)' $BuiltinsArchive
 foreach ($archive in $ExtraArchives) { Require-File 'Extra archive' $archive }
 foreach ($include in $ExtraIncludes) { Require-Directory 'Extra include directory' $include }
+foreach ($include in $ExtraSystemIncludes) { Require-Directory 'Extra system include directory' $include }
+foreach ($object in $ExtraObjectFiles) { Require-File 'Extra object' $object }
 foreach ($font in @('Figtree-400.ttf', 'Figtree-650.ttf', 'fa-solid-900.ttf')) {
     Require-File 'UI font' (Join-Path $project "assets\fonts\$font")
 }
@@ -200,6 +211,9 @@ $compile = @(
     '-I', (Join-Path $ImGuiDir 'backends'), '-I', (Join-Path $project 'src')
 )
 foreach ($include in $ExtraIncludes) { $compile += @('-I', $include) }
+foreach ($include in $ExtraSystemIncludes) { $compile += @('-isystem', $include) }
+foreach ($definition in $ExtraDefines) { $compile += "-D$definition" }
+if ($EnableAirPlay) { $compile += '-DMIRRORPSX_PS5_AIRPLAY=1' }
 $cxx = $compile + @('-std=c++20', '-fno-exceptions', '-fno-rtti', '-DNDEBUG',
                      '-Wall', '-Wextra', '-Wno-missing-field-initializers')
 $objects = @()
@@ -220,6 +234,7 @@ $objects += $identityObj
 $identityGateObj = Join-Path $objDir 'ps5_identity_gate.o'
 Invoke-Checked $clang @('--target=x86_64-sie-ps5', '-fPIC', '-c', $identityAsm, '-o', $identityGateObj) 'PS5 identity syscall gate compile failed'
 $objects += $identityGateObj
+$objects += $ExtraObjectFiles
 $archive = Join-Path $objDir 'libmirrorpsx_ps5.a'
 Invoke-Checked $archiver (@('rcs', $archive) + $objects) 'Cannot archive native MirrorPSX objects'
 
@@ -256,6 +271,7 @@ $linkArgs = @(
     '--wrap=fclose', '--wrap=fflush',
     '--wrap=getuid', '--wrap=geteuid', '--wrap=getgid', '--wrap=getegid'
 )
+if ($EnableAirPlay) { $linkArgs += '-lSceNet' }
 foreach ($name in $bindings) { $linkArgs += "--defsym=$name=ps5_$name" }
 $linkArgs += @('--version-script', $map, '-o', $elf)
 Invoke-Checked $linker $linkArgs 'OpenProspero application link failed'
@@ -304,6 +320,7 @@ $manifest = [ordered]@{
     elfSha256 = (Get-FileHash -LiteralPath $elf -Algorithm SHA256).Hash
     radvSha256 = (Get-FileHash -LiteralPath $RadvArchive -Algorithm SHA256).Hash
     libcPrxSha256 = $knownHash
+    airPlayEnabled = [bool]$EnableAirPlay
     consoleExecutionVerified = $false
 }
 $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $OutputRoot 'manifest.json') -Encoding utf8

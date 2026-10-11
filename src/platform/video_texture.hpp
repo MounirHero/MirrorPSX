@@ -17,6 +17,8 @@ class VideoTexture {
     VkDeviceSize upload_capacity_=0;
     VkCommandPool command_pool_=VK_NULL_HANDLE;
     VkCommandBuffer command_=VK_NULL_HANDLE;
+    VkFence upload_fence_=VK_NULL_HANDLE;
+    bool upload_in_flight_=false;
     int width_=0, height_=0;
     bool initialized_=false;
     void destroy_image();

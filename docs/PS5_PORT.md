@@ -169,3 +169,16 @@ Windows AirPlay/iPad mirroring and Windows UI regression suite.
 validation, controller usability test, console-native UxPlay/FFmpeg/OpenSSL
 integration, companion network broker where required, actual AirPlay pairing/
 streaming from the PS5 target and low-latency frame synchronization on-console.
+
+### Subsequent experimental receiver milestone
+
+The independent `MPSX00002` title now cross-compiles and links the full UxPlay
+receiver, the upstream libplist 2.7.0 static library, PacBrew v0.40.2
+FFmpeg/OpenSSL and the MirrorPSX Vulkan renderer in one PS5 application ELF.
+OpenProspero emits and structurally validates a separate PKG. Video upload
+now uses a transfer fence rather than waiting for the graphics queue to go
+idle on every frame (full device synchronization remains on texture resize).
+These are build-level achievements only, not physical PS5 network/GPU tests.
+App-private pairing persistence, multicast and sandbox capability checks are
+the remaining runtime gates; no companion is bundled or claimed necessary
+until a denied operation identifies its required privilege boundary.

@@ -69,8 +69,16 @@ bool AirPlay::start(const std::string& name) {
             std::fprintf(stderr, "[AirPlay] %s\n", msg);
         }
     },nullptr);
-    // Stable locally administered identity; persistent pairing key stored by UxPlay.
-    if(raop_init2(server_,0,"02:4D:50:53:58:01","mirrorpsx.key")!=0) { stop(); state_.update([](auto& s){s.error="AirPlay pairing initialization failed";}); return false; }
+    // The PS5 application mount (/app0) is immutable. Until the app-private
+    // savedata path is tested on hardware, avoid attempting to write a key
+    // beside the executable. UxPlay supports an ephemeral identity without
+    // a file, but already-paired clients must re-pair after each restart.
+#if defined(MIRRORPSX_PS5_AIRPLAY)
+    constexpr const char* key_file = "";
+#else
+    constexpr const char* key_file = "mirrorpsx.key";
+#endif
+    if(raop_init2(server_,0,"02:4D:50:53:58:01",key_file)!=0) { stop(); state_.update([](auto& s){s.error="AirPlay pairing initialization failed";}); return false; }
     int error=0; const char mac[]={0x02,0x4d,0x50,0x53,0x58,0x01};
     discovery_=dnssd_init(name.c_str(),int(name.size()),mac,6,1,&error);
     if(!discovery_ || error) { stop(); state_.update([&](auto& s){s.error="Scoperta mDNS non disponibile ("+std::to_string(error)+")";}); return false; }

@@ -53,9 +53,17 @@ which must be audited before distribution in an AirPlay-enabled title.
 
 UxPlay requires `libplist` as well as FFmpeg/OpenSSL and DNS-SD/Bonjour.
 The examined PacBrew image contains the FFmpeg and OpenSSL archives but does
-**not** contain a libplist archive. Port and validate libplist separately,
-then cross-compile UxPlay with console-safe libc, sockets, threads and file
-system paths.
+**not** contain a libplist archive. Upstream `libplist 2.7.0` was subsequently
+cross-compiled as 16 C units for PS5 using isolated PacBrew headers. The new
+`build-ps5-libplist.ps1` and `build-ps5-airplay-probe.ps1` scripts reproduce
+this work, compiling 30 UxPlay C units and linking with OpenSSL and libplist.
+These are successful **link tests, not runtime tests**.
+
+`build-ps5-airplay-experimental.ps1` now combines UxPlay, the FFmpeg decoder
+and MirrorPSX's Vulkan host in a **separate MPSX00002 experimental PKG**.
+It starts/stops the receiver through the real UI action; pairing identity is
+ephemeral until a stable writable console location is tested. The experimental
+PacBrew ABI workaround is never added to the reference UI-only PKG.
 
 Verify the codec probe on authorized PS5 hardware before linking it into the
 full UI title. The application sandbox's access to mDNS multicast and RTSP/
