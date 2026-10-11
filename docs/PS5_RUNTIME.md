@@ -1,5 +1,22 @@
 # PS5 deployment and runtime evidence
 
+## Latest diagnostic packages staged (2026-10-11)
+
+Following the read-only installer audit, both newly compiled packages were
+uploaded into **new, hash-specific directories**, fetched back over FTP and
+checked against the original SHA-256. Neither was installed or launched.
+
+| Profile | Local PKG | Remote FTP directory | SHA-256 |
+| --- | --- | --- | --- |
+| UI-only diagnostic (`MPSX00001`) | `build-ps5-package/runtime-03-diagnostic/pkg/UP9000-MPSX00001_00-MIRRORPSXUI00001-A0100-V0100.pkg` | `/data/mirrorpsx-staging/MPSX00001-08E6DBE5FC4FD803/` | `08E6DBE5FC4FD8037490131FFA4A2FE81D7F75545B9DC4A4072F5999A9FD1AEA` |
+| Secure ephemeral-pairing AirPlay (`MPSX00002`) | `build-ps5-package/airplay-exp-06-secure-pairing/pkg/UP9000-MPSX00002_00-MIRRORPSXAIR0001-A0100-V0100.pkg` | `/data/mirrorpsx-staging/MPSX00002-1BDF0E4BEEF74D92/` | `1BDF0E4BEEF74D92BCE60FFDA39FF2293283A87F36CCF5843B382B7000901BFB` |
+
+Transfer evidence: `build-ps5-package/deployment-evidence/mirrorpsx-20261011T190131Z-60fbbf61/`
+and `mirrorpsx-20261011T190133Z-8af8c73f/` within the same evidence root.
+UI-only should be installed first, **only** through a package manager already
+trusted on the console. If it cannot browse `/data/mirrorpsx-staging/`, use its
+normal USB install procedure with the locally hash-verified file.
+
 ## Verified remote installer investigation (2026-10-11)
 
 The authorized console (configured through `-Console` or
@@ -33,8 +50,8 @@ inventory of installed titles.
    Its reported SHA-256 is
    `08E6DBE5FC4FD8037490131FFA4A2FE81D7F75545B9DC4A4072F5999A9FD1AEA`.
    Confirm that hash locally with `Get-FileHash -Algorithm SHA256` and check
-   the adjacent `manifest.json`. **This diagnostic build has not been uploaded
-   by this investigation**; the earlier `runtime-02` build remains staged.
+   the adjacent `manifest.json`. The latest diagnostic build was uploaded
+   and SHA-256 read-back verified after the installer investigation (see above).
    A newer separate experimental AirPlay PKG is also available at
    `build-ps5-package/airplay-exp-06-secure-pairing/pkg/` with reported
    SHA-256 `1BDF0E4BEEF74D92BCE60FFDA39FF2293283A87F36CCF5843B382B7000901BFB`.
@@ -45,12 +62,11 @@ inventory of installed titles.
    you have used for previous homebrew installations. If you cannot find an
    existing installer, stop: the remote services inspected here cannot install
    the package safely.
-3. **Prefer the newest `runtime-03-diagnostic` UI package.** Copy the locally
-   verified PKG to a USB volume using the file layout your *existing* package
-   manager already supports, then select it through that manager. There is
-   also an older `runtime-02` package under `/data/mirrorpsx-staging`, but
-   it is **not** the latest diagnostic build: use it only for a specifically
-   labeled regression comparison, if your installer can browse that path.
+3. **Prefer the newest `runtime-03-diagnostic` UI package.** If your already
+   trusted package manager can browse the private staging path in the table
+   above, select that PKG. Otherwise copy the locally verified PKG to a USB
+   volume using your manager's established layout and select it there. The
+   earlier `runtime-02` package is only for a labeled regression comparison.
    Match the selected file's hash with the corresponding build manifest.
 4. Before confirming install, verify that the manager shows `MPSX00001`
    and `UP9000-MPSX00001_00-MIRRORPSXUI00001`. Cancel if a different
@@ -108,8 +124,9 @@ set the parser's `firstFrameSubmitted` checkpoint, which deliberately does
 `not-visible-in-checked-paths`; `-Probe` reported both optional DPI ports
 unreachable. The baseline `-Archive` and immediate `-Archive -BaselinePath`
 completed without a concurrent klog connection and found no MirrorPSX
-markers, as expected before installation. No PKG transfer, install, or
-console launch was performed during this follow-up.
+markers, as expected before installation. The initial installer audit was
+read-only; the later explicitly scoped staging uploaded both new PKGs without
+installing or launching either title.
 
 ### Reproducible evidence from this read-only investigation
 
