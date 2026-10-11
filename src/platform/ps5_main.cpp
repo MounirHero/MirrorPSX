@@ -59,11 +59,92 @@ struct Ps5Vulkan {
     bool initialized{};
     bool swapchain_dirty{};
     bool last_frame_presented{};
+    uint32_t surface_width{};
+    uint32_t surface_height{};
 
     static bool ok(VkResult code, const char* what) {
         if (code == VK_SUCCESS || code == VK_SUBOPTIMAL_KHR) return true;
         ps5_log("MirrorPSX PS5: %s failed: VkResult %d\n", what, int(code));
         return false;
+    }
+
+    // Dear ImGui's Vulkan convenience helpers assert instead of returning
+    // errors for unsupported WSI capabilities, empty format lists and more
+    // than fifteen backbuffers. Guard those assumptions before calling them.
+    bool validate_surface() {
+        VkSurfaceCapabilitiesKHR caps{};
+        if (!ok(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical, window.Surface, &caps),
+                "surface capabilities")) return false;
+        const uint32_t count = std::max(2u, caps.minImageCount);
+        if (count > 15 || (caps.maxImageCount && caps.maxImageCount < count) ||
+            !(caps.supportedUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) ||
+            !(caps.supportedCompositeAlpha & (VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR |
+                                              VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR))) {
+            ps5_log("MirrorPSX PS5: incompatible swapchain capabilities min=%u max=%u usage=%x alpha=%x\n",
+                    caps.minImageCount, caps.maxImageCount, caps.supportedUsageFlags,
+                    caps.supportedCompositeAlpha);
+            return false;
+        }
+        const auto extent = caps.currentExtent.width == UINT32_MAX
+            ? VkExtent2D{surface_width, surface_height} : caps.currentExtent;
+        if (!extent.width || !extent.height || extent.width > 3840 || extent.height > 2160 ||
+            extent.width < caps.minImageExtent.width ||
+            extent.height < caps.minImageExtent.height ||
+            extent.width > caps.maxImageExtent.width ||
+            extent.height > caps.maxImageExtent.height) {
+            ps5_log("MirrorPSX PS5: invalid surface extent %ux%u (min %ux%u, max %ux%u)\n",
+                    extent.width, extent.height, caps.minImageExtent.width, caps.minImageExtent.height,
+                    caps.maxImageExtent.width, caps.maxImageExtent.height);
+            return false;
+        }
+        uint32_t formats = 0, modes = 0;
+        if (!ok(vkGetPhysicalDeviceSurfaceFormatsKHR(physical, window.Surface, &formats, nullptr),
+                "surface formats") || !formats || formats > 128 ||
+            !ok(vkGetPhysicalDeviceSurfacePresentModesKHR(physical, window.Surface, &modes, nullptr),
+                "surface present modes") || !modes || modes > 128) {
+            ps5_log("MirrorPSX PS5: surface lacks bounded format/present-mode lists\n");
+            return false;
+        }
+        window.Width = int(extent.width);
+        window.Height = int(extent.height);
+        return true;
+    }
+
+    bool check_swapchain_extension() {
+        uint32_t count = 0;
+        if (!ok(vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, nullptr),
+                "device extensions") || count > 4096) return false;
+        std::vector<VkExtensionProperties> extensions(count);
+        if (count && !ok(vkEnumerateDeviceExtensionProperties(physical, nullptr, &count,
+                                                              extensions.data()), "device extension list")) return false;
+        for (uint32_t i = 0; i < count; ++i)
+            if (std::strcmp(extensions[i].extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0)
+                return true;
+        ps5_log("MirrorPSX PS5: VK_KHR_swapchain is not exposed by the selected GPU\n");
+        return false;
+    }
+
+    bool check_instance_extensions() {
+        if (!vkCreateInstance || !vkEnumerateInstanceExtensionProperties) {
+            ps5_log("MirrorPSX PS5: RADV ICD failed to expose Vulkan global entrypoints\n");
+            return false;
+        }
+        uint32_t count = 0;
+        if (!ok(vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr),
+                "instance extensions") || count > 4096) return false;
+        std::vector<VkExtensionProperties> extensions(count);
+        if (count && !ok(vkEnumerateInstanceExtensionProperties(nullptr, &count,
+                                                                  extensions.data()),
+                         "instance extension list")) return false;
+        bool surface = false, display = false;
+        for (uint32_t i = 0; i < count; ++i) {
+            surface |= std::strcmp(extensions[i].extensionName, VK_KHR_SURFACE_EXTENSION_NAME) == 0;
+            display |= std::strcmp(extensions[i].extensionName, VK_KHR_DISPLAY_EXTENSION_NAME) == 0;
+        }
+        if (!surface || !display)
+            ps5_log("MirrorPSX PS5: missing Vulkan instance extensions surface=%d display=%d\n",
+                    int(surface), int(display));
+        return surface && display;
     }
 
     bool create_surface() {
@@ -159,6 +240,8 @@ struct Ps5Vulkan {
                                 window.Surface = surface;
                                 window.Width = int(sci.imageExtent.width);
                                 window.Height = int(sci.imageExtent.height);
+                                surface_width = sci.imageExtent.width;
+                                surface_height = sci.imageExtent.height;
                                 VkPhysicalDeviceProperties gpu_props{};
                                 vkGetPhysicalDeviceProperties(gpu, &gpu_props);
                                 ps5_log("MirrorPSX PS5: selected GPU vendor=%04x device=%04x queue=%u display=%dx%d\n",
@@ -180,6 +263,7 @@ struct Ps5Vulkan {
         // PS5 does not provide a host Vulkan loader. RADV supplies the ICD.
         ps5_log("MirrorPSX PS5: initializing RADV/Volk ICD\n");
         volkInitializeCustom(vk_icdGetInstanceProcAddr);
+        if (!check_instance_extensions()) return false;
         VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
         app.pApplicationName = "MirrorPSX";
         app.apiVersion = VK_API_VERSION_1_1;
@@ -194,6 +278,7 @@ struct Ps5Vulkan {
         volkLoadInstance(instance);
         ps5_log("MirrorPSX PS5: Vulkan instance initialized\n");
         if (!create_surface()) return false;
+        if (!check_swapchain_extension() || !validate_surface()) return false;
         const float priority = 1;
         VkDeviceQueueCreateInfo qi{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
         qi.queueFamilyIndex = family;
@@ -302,6 +387,7 @@ struct Ps5Vulkan {
         if (!swapchain_dirty) return true;
         ps5_log("MirrorPSX PS5: recreating Vulkan swapchain\n");
         if (!ok(vkDeviceWaitIdle(device), "swapchain device wait")) return false;
+        if (!validate_surface()) return false;
         ImGui_ImplVulkan_SetMinImageCount(2);
         ImGui_ImplVulkanH_CreateOrResizeWindow(instance, physical, device, &window,
             family, nullptr, window.Width, window.Height, 2,
@@ -396,6 +482,7 @@ extern "C" int main() {
     mirror::AirPlay receiver(airplay_state);
     auto video_texture = std::make_unique<mirror::VideoTexture>(graphics.physical,graphics.device);
     uint64_t last_video_frame = 0;
+    bool first_video_uploaded = false;
 #endif
     mirror::ScreenUiState screen{};
     openprospero::ps5::GamePad controller;
@@ -406,6 +493,7 @@ extern "C" int main() {
     bool first_frame = true;
     unsigned reconnect_frames = 0;
     bool run = true;
+    bool pad_connected_logged = false;
     while (run) {
         if (!graphics.rebuild()) {
             ps5_log("MirrorPSX PS5: swapchain recovery failed\n");
@@ -431,6 +519,10 @@ extern "C" int main() {
             }
         } else {
             reconnect_frames = 0;
+        }
+        if (buttons.connected != pad_connected_logged) {
+            pad_connected_logged = buttons.connected;
+            ps5_log("MirrorPSX PS5: DualSense %s\n", buttons.connected ? "connected" : "disconnected");
         }
         // PS5 controller-only sessions need an exit path independent of the
         // disconnected network runtime. Require a deliberate OPTIONS hold.
@@ -463,10 +555,18 @@ extern "C" int main() {
         mirror::VideoFrame frame;
         if (airplay_state.frame_after(last_video_frame, frame)) {
             last_video_frame = frame.sequence;
-            if (!video_texture->upload(graphics.queue, graphics.family, frame))
+            if (!video_texture->upload(graphics.queue, graphics.family, frame)) {
+                video_texture->clear(); // Do not present a stale or incomplete descriptor.
                 airplay_state.update([](mirror::Snapshot& s) {
                     s.error = "Vulkan video texture upload failed";
                 });
+                ps5_log("MirrorPSX PS5: video texture upload failed sequence=%llu size=%dx%d\n",
+                        static_cast<unsigned long long>(frame.sequence), frame.width, frame.height);
+            } else if (!first_video_uploaded) {
+                first_video_uploaded = true;
+                ps5_log("MirrorPSX PS5: first decoded video frame uploaded to Vulkan sequence=%llu size=%dx%d\n",
+                        static_cast<unsigned long long>(frame.sequence), frame.width, frame.height);
+            }
         }
         snapshot = airplay_state.snapshot();
         if (!snapshot.width || !snapshot.height) video_texture->clear();
@@ -479,7 +579,11 @@ extern "C" int main() {
         switch (mirror::render_screen(snapshot, video_handle, video_width, video_height, screen)) {
             case mirror::ScreenAction::start:
 #ifdef MIRRORPSX_PS5_AIRPLAY
-                receiver.start("MirrorPSX PS5");
+                ps5_log("MirrorPSX PS5: AirPlay receiver starting\n");
+                if (receiver.start("MirrorPSX PS5"))
+                    ps5_log("MirrorPSX PS5: AirPlay receiver listening\n");
+                else
+                    ps5_log("MirrorPSX PS5: AirPlay receiver failed to start\n");
 #else
                 snapshot.error = "AirPlay networking is not included in this UI test build";
 #endif
@@ -487,6 +591,8 @@ extern "C" int main() {
             case mirror::ScreenAction::stop:
 #ifdef MIRRORPSX_PS5_AIRPLAY
                 receiver.stop();
+                first_video_uploaded = false;
+                ps5_log("MirrorPSX PS5: AirPlay receiver stopped\n");
 #endif
                 break;
             case mirror::ScreenAction::none: break;
@@ -494,9 +600,11 @@ extern "C" int main() {
         // UI remains fully inside the display's television safe area. The
         // native Exit hint is platform-specific and does not affect Windows.
         const float scale = std::min(io.DisplaySize.x / 1920.0f, io.DisplaySize.y / 1080.0f);
+        const ImVec2 origin{(io.DisplaySize.x - 1920.0f * scale) * .5f,
+                            (io.DisplaySize.y - 1080.0f * scale) * .5f};
         const char* hint = "Hold OPTIONS to exit";
-        ImGui::GetForegroundDrawList()->AddText(bold, 18.0f * scale,
-            {io.DisplaySize.x - 290.0f * scale, 1048.0f * scale},
+        ImGui::GetForegroundDrawList()->AddText(bold, 16.0f * scale,
+            {origin.x + 1160.0f * scale, origin.y + 1031.0f * scale},
             IM_COL32(170, 185, 205, 240), hint);
         ImGui::Render();
         if (!graphics.present(ImGui::GetDrawData())) {

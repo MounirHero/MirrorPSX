@@ -99,6 +99,13 @@ $buildArgs = @{
     )
     ExtraObjectFiles = $objects
     ExtraArchives = $archives
+    ExtraLicensePaths = @(
+        (Join-Path $project 'third_party\uxplay\LICENSE'),
+        (Join-Path $project 'third_party\uxplay\lib\llhttp\LICENSE-MIT'),
+        (Join-Path $project 'third_party\uxplay\lib\playfair\LICENSE.md'),
+        (Join-Path $LibplistSource 'COPYING'),
+        (Join-Path $LibplistSource 'COPYING.LESSER')
+    )
 }
 & (Join-Path $PSScriptRoot 'build-ps5.ps1') @buildArgs
 if (-not $?) {throw 'PS5 AirPlay experimental PKG build failed'}

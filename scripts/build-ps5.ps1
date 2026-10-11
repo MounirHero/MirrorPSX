@@ -19,6 +19,7 @@ param(
     [string[]]$ExtraSystemIncludes = @(),
     [string[]]$ExtraObjectFiles = @(),
     [string[]]$ExtraDefines = @(),
+    [string[]]$ExtraLicensePaths = @(),
     [switch]$EnableAirPlay,
     [switch]$Probe,
     [switch]$StageOnly
@@ -103,6 +104,7 @@ $ExtraArchives = @($ExtraArchives | ForEach-Object { Full-Path $_ })
 $ExtraIncludes = @($ExtraIncludes | ForEach-Object { Full-Path $_ })
 $ExtraSystemIncludes = @($ExtraSystemIncludes | ForEach-Object { Full-Path $_ })
 $ExtraObjectFiles = @($ExtraObjectFiles | ForEach-Object { Full-Path $_ })
+$ExtraLicensePaths = @($ExtraLicensePaths | ForEach-Object { Full-Path $_ })
 if ($EnableAirPlay -and (-not $ExtraSources -or -not $ExtraObjectFiles -or -not $ExtraArchives)) {
     throw 'AirPlay profile requires explicit C++ sources, UxPlay C objects and dependency archives.'
 }
@@ -150,6 +152,7 @@ foreach ($archive in $ExtraArchives) { Require-File 'Extra archive' $archive }
 foreach ($include in $ExtraIncludes) { Require-Directory 'Extra include directory' $include }
 foreach ($include in $ExtraSystemIncludes) { Require-Directory 'Extra system include directory' $include }
 foreach ($object in $ExtraObjectFiles) { Require-File 'Extra object' $object }
+foreach ($license in $ExtraLicensePaths) { Require-File 'Third-party license' $license }
 foreach ($font in @('Figtree-400.ttf', 'Figtree-650.ttf', 'fa-solid-900.ttf')) {
     Require-File 'UI font' (Join-Path $project "assets\fonts\$font")
 }
@@ -293,6 +296,21 @@ $stage = Join-Path $OutputRoot 'package-input'
 New-Item -ItemType Directory -Path $stage | Out-Null
 Copy-Item -LiteralPath $elf -Destination (Join-Path $stage 'eboot.bin')
 Copy-Item -LiteralPath (Join-Path $project 'assets') -Destination (Join-Path $stage 'assets') -Recurse
+$licenseManifest = @()
+$licenseIndex = 0
+foreach ($license in $ExtraLicensePaths) {
+    # Explicit, immutable filenames prevent two different projects' LICENSE
+    # files from overwriting one another. Source licenses stay in their
+    # original checkout and are never modified during packaging.
+    $filename = ('dependency-{0:D2}-{1}' -f $licenseIndex, [IO.Path]::GetFileName($license))
+    $target = Join-Path (Join-Path $stage 'assets\licenses') $filename
+    Copy-Item -LiteralPath $license -Destination $target
+    $licenseManifest += [ordered]@{
+        packagedFile = "assets/licenses/$filename"
+        sha256 = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
+    }
+    $licenseIndex++
+}
 if ($SceSysDir) { Copy-Item -LiteralPath $SceSysDir -Destination (Join-Path $stage 'sce_sys') -Recurse }
 if ($StageOnly) {
     Write-Host "PS5 application ELF and staging built: $elf ; $stage"
@@ -321,6 +339,7 @@ $manifest = [ordered]@{
     radvSha256 = (Get-FileHash -LiteralPath $RadvArchive -Algorithm SHA256).Hash
     libcPrxSha256 = $knownHash
     airPlayEnabled = [bool]$EnableAirPlay
+    bundledDependencyLicenses = $licenseManifest
     consoleExecutionVerified = $false
 }
 $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $OutputRoot 'manifest.json') -Encoding utf8

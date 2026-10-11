@@ -594,17 +594,24 @@ raop_init(raop_callbacks_t *callbacks) {
     /* Validate the callbacks structure */
     if (!callbacks->audio_process ||
         !callbacks->video_process) {
+        netutils_cleanup();
         return NULL;
     }
 
     /* Allocate the raop_t structure */
     raop_t *raop = (raop_t *) calloc(1, sizeof(raop_t));
     if (!raop) {
+        netutils_cleanup();
         return NULL;
     }
 
     /* Initialize the logger */
     raop->logger = logger_init();
+    if (!raop->logger) {
+        free(raop);
+        netutils_cleanup();
+        return NULL;
+    }
 
     /* Copy callbacks structure */
     memcpy(&raop->callbacks, callbacks, sizeof(raop_callbacks_t));
@@ -653,6 +660,9 @@ int
 raop_init2(raop_t *raop, int nohold, const char *device_id, const char *keyfile) {
     pairing_t *pairing = NULL;
     httpd_t *httpd = NULL;
+    if (!raop || raop->pairing || raop->httpd || !device_id || !keyfile) {
+        return -1;
+    }
 
     /* create a new public key for pairing */
     int new_key = 0;
@@ -701,7 +711,11 @@ void
 raop_destroy(raop_t *raop) {
     if (raop) {
         raop_destroy_airplay_video(raop, -1);
-        raop_stop_httpd(raop);
+        /* raop_init2 can fail before it creates the HTTP daemon, and callers
+         * must be able to destroy that partially initialized instance. */
+        if (raop->httpd) {
+            raop_stop_httpd(raop);
+        }
         pairing_destroy(raop->pairing);
         httpd_destroy(raop->httpd);
         logger_destroy(raop->logger);

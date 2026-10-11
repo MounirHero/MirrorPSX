@@ -1,5 +1,46 @@
 # PS5 deployment and runtime evidence
 
+## Current PS5 build/stage checkpoint (2026-10-11, runtime hardening)
+
+New code changes required **new** isolated PKGs. Both were compiled and
+structurally validated (OpenProspero 0 errors, 0 warnings), then staged once
+under private hash-named FTP paths and fetched back with matching SHA-256.
+No console package installation or title launch has occurred.
+
+| Priority | Profile | Local PKG directory | SHA-256 | PS5 staging directory |
+| --- | --- | --- | --- | --- |
+| First | `MPSX00001` UI-only `runtime-05-wsi-guard` | `build-ps5-package/runtime-05-wsi-guard/pkg/` | `5589CCC36C8787EC0B7C7912C450A52D5512A91027BE5FD84CC4E2D1B30AEB7C` | `/data/mirrorpsx-staging/MPSX00001-5589CCC36C8787EC/` |
+| After successful UI boot | `MPSX00002` AirPlay experimental `airplay-exp-08-license-audit` | `build-ps5-package/airplay-exp-08-license-audit/pkg/` | `7CDEE176CB22142A29754015446C0AFAB4E18797A19804A02CF476692E761BB2` | `/data/mirrorpsx-staging/MPSX00002-7CDEE176CB22142A/` |
+
+The exact package filenames remain
+`UP9000-MPSX00001_00-MIRRORPSXUI00001-A0100-V0100.pkg` and
+`UP9000-MPSX00002_00-MIRRORPSXAIR0001-A0100-V0100.pkg`, respectively.
+SHA readback evidence is under
+`build-ps5-package/deployment-evidence/mirrorpsx-20261011T191518Z-2359372f/`
+and `mirrorpsx-20261011T191520Z-1df5a1e5/`. These newer packages
+supersede earlier staged diagnostic artifacts for **future testing only**;
+they do not replace installed applications automatically.
+
+Use the *existing trusted on-console package manager* to select the UI-only
+PKG from that exact staging directory. If the manager cannot browse `/data`,
+copy the locally hash-verified file to USB using that manager's supported
+file layout; do not improvise an FTP install command or write `/user/app`.
+Verify title `MPSX00001` and content ID in the manager before confirming.
+After installation, run `scripts/deploy-ps5.ps1 -VerifyInstall -TitleId
+MPSX00001`, capture an `-Archive` baseline from the already-running Hyperion
+collector, launch from the console menu and capture a log delta via
+`-Archive -BaselinePath` per the procedure below. Physical TV image visibility
+and controller navigation **must** be observed independently of any log marker.
+
+The UI-only host now validates Vulkan instance and swapchain extension lists,
+surface capabilities/format/present-mode availability before invoking ImGui's
+assert-heavy WSI helper, and reports device, queue, format failures and
+DualSense connection changes. The AirPlay title adds bounds checks on binary
+pairing requests, protects partial RAOP cleanup, drains FFmpeg packets on
+`EAGAIN`, and reports first frame upload. The GPU submission and texture code
+still requires on-hardware validation. No sandbox restriction requiring a
+companion has been demonstrated: no new privileged component was installed.
+
 ## Latest diagnostic packages staged (2026-10-11)
 
 Following the read-only installer audit, both newly compiled packages were

@@ -299,7 +299,16 @@ raop_handler_pairsetup_pin(raop_conn_t *conn,
 
     /* process the pair-setup-pin request */
     plist_t req_root_node = NULL;
-    plist_from_bin(request_data, request_datalen, &req_root_node);
+    if (!request_data || request_datalen <= 0) {
+        goto authentication_failed;
+    }
+    /* libplist <2.3 exposed a void-returning parser; inspect its output
+     * instead of depending on the newer plist_err_t return ABI. */
+    plist_from_bin(request_data, (uint32_t) request_datalen, &req_root_node);
+    if (!PLIST_IS_DICT(req_root_node)) {
+        plist_free(req_root_node);
+        goto authentication_failed;
+    }
     plist_t req_method_node = plist_dict_get_item(req_root_node, "method");
     plist_t req_user_node = plist_dict_get_item(req_root_node, "user");
     plist_t req_pk_node = plist_dict_get_item(req_root_node, "pk");
@@ -316,16 +325,21 @@ raop_handler_pairsetup_pin(raop_conn_t *conn,
         char *method = NULL;
         char *user = NULL;
         plist_get_string_val(req_method_node, &method);
-        if (strncmp(method, "pin", strlen (method))) {
-            logger_log(raop->logger, LOGGER_ERR, "error, required method is \"pin\", client requested \"%s\"", method);
-            free (method);
-            plist_free (req_root_node);
-            return;
+        if (!method || strcmp(method, "pin") != 0) {
+            logger_log(raop->logger, LOGGER_ERR, "pair-setup-pin: unsupported authentication method");
+            plist_mem_free(method);
+            plist_free(req_root_node);
+            goto authentication_failed;
         }
         plist_mem_free(method);
         method = NULL;
         plist_get_string_val(req_user_node, &user);
-        logger_log(raop->logger, LOGGER_INFO, "pair-setup-pin:  device_id = %s", user);
+        if (!user || !*user) {
+            plist_mem_free(user);
+            plist_free(req_root_node);
+            goto authentication_failed;
+        }
+        logger_log(raop->logger, LOGGER_INFO, "pair-setup-pin: client identifier supplied");
         snprintf(pin, 6, "%04u", raop->pin % 10000);
         if (raop->pin < 10000) {
             raop->pin = 0;
@@ -358,16 +372,27 @@ raop_handler_pairsetup_pin(raop_conn_t *conn,
         uint64_t client_proof_len = 0;
         plist_get_data_val(req_pk_node, &client_pk, &client_pk_len); 
         plist_get_data_val(req_proof_node, &client_proof, &client_proof_len);
+        /* The SRP client public key is a 2048-bit group value, while M1 is
+         * SHA-512. Never memcpy network-controlled shorter buffers into the
+         * fixed stack array, or pass truncated/oversized values to OpenSSL. */
+        if (!client_pk || !client_proof ||
+            client_pk_len == 0 || client_pk_len > SRP_VERIFIER_SIZE ||
+            client_proof_len != sizeof(proof)) {
+            plist_mem_free(client_pk);
+            plist_mem_free(client_proof);
+            plist_free(req_root_node);
+            goto authentication_failed;
+        }
         if (logger_debug) {
             char *str = utils_data_to_string((const unsigned char *) client_proof, client_proof_len, 20);
             logger_log(raop->logger, LOGGER_DEBUG, "client SRP6a proof <M> :\n%s", str);	    
             free (str);
         }
         memcpy(proof, client_proof, sizeof(proof));
-        free (client_proof);
+        plist_mem_free(client_proof);
         int ret = srp_validate_proof(conn->session, raop->pairing, (const unsigned char *) client_pk,
                                      (int) client_pk_len, proof, (int) sizeof(proof));
-        free (client_pk);
+        plist_mem_free(client_pk);
         plist_free(req_root_node);
         if (ret < 0) {
             logger_log(raop->logger, LOGGER_ERR, "Client Authentication Failure (client proof not validated)");
@@ -396,6 +421,14 @@ raop_handler_pairsetup_pin(raop_conn_t *conn,
         int ret = 0;
         plist_get_data_val(req_epk_node, &client_epk, &client_epk_len); 
         plist_get_data_val(req_authtag_node, &client_authtag, &client_authtag_len);
+        if (!client_epk || !client_authtag ||
+            client_epk_len != sizeof(epk) ||
+            client_authtag_len != sizeof(authtag)) {
+            plist_mem_free(client_epk);
+            plist_mem_free(client_authtag);
+            plist_free(req_root_node);
+            goto authentication_failed;
+        }
 
         if (logger_debug) {
             char *str = utils_data_to_string((const unsigned char *) client_epk, client_epk_len, 16);
@@ -407,8 +440,8 @@ raop_handler_pairsetup_pin(raop_conn_t *conn,
 
         memcpy(epk, client_epk, ED25519_KEY_SIZE);
         memcpy(authtag, client_authtag, GCM_AUTHTAG_SIZE);
-        free (client_authtag);
-        free (client_epk);
+        plist_mem_free(client_authtag);
+        plist_mem_free(client_epk);
         plist_free(req_root_node);
         ret = srp_confirm_pair_setup(conn->session, raop->pairing, epk, authtag);
         if (ret < 0) {

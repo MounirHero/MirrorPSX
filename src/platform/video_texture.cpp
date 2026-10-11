@@ -2,6 +2,7 @@
 #include "platform/video_texture.hpp"
 #include "imgui_impl_vulkan.h"
 #include <cstring>
+#include <cstdio>
 
 namespace mirror {
 namespace {
@@ -39,6 +40,8 @@ void VideoTexture::destroy_upload() {
     command_ = VK_NULL_HANDLE;
     upload_fence_ = VK_NULL_HANDLE;
     upload_in_flight_ = false;
+    upload_queue_ = VK_NULL_HANDLE;
+    upload_family_ = UINT32_MAX;
     upload_buffer_ = VK_NULL_HANDLE;
     upload_memory_ = VK_NULL_HANDLE;
     upload_capacity_ = 0;
@@ -50,7 +53,11 @@ VideoTexture::~VideoTexture() {
 
 void VideoTexture::clear() {
     if (!image_ && !memory_ && !view_ && !sampler_ && !descriptor_ &&
-        !upload_buffer_ && !upload_memory_ && !command_pool_ && !upload_fence_) return;
+        !upload_buffer_ && !upload_memory_ && !command_pool_ && !upload_fence_) {
+        upload_queue_ = VK_NULL_HANDLE;
+        upload_family_ = UINT32_MAX;
+        return;
+    }
     if (device_) vkDeviceWaitIdle(device_);
     destroy_image();
     destroy_upload();
@@ -103,13 +110,24 @@ bool VideoTexture::upload(VkQueue queue, uint32_t family, const VideoFrame& fram
         frame.width > 4096 || frame.height > 4096 ||
         frame.rgba.size() != size_t(frame.width) * size_t(frame.height) * 4u) return false;
 
+    // The command pool and image belong to one queue family. Reject a changed
+    // submit queue rather than silently submitting a command buffer created
+    // for a different family or racing transfers from separate queues.
+    if (!queue || (upload_queue_ && (queue != upload_queue_ || family != upload_family_)))
+        return false;
+    upload_queue_ = queue;
+    upload_family_ = family;
+
     // A fence protects reuse of the transfer command pool/staging buffer.
     // Do not stall all queues or wait for this frame's transfer completion:
     // the subsequent ImGui draw is submitted to the same graphics queue,
     // and Vulkan ordering/barriers make the uploaded image visible to it.
     if (upload_in_flight_) {
-        if (vkWaitForFences(device_, 1, &upload_fence_, VK_TRUE, UINT64_MAX) != VK_SUCCESS)
+        const auto wait = vkWaitForFences(device_, 1, &upload_fence_, VK_TRUE, 2000000000ULL);
+        if (wait != VK_SUCCESS) {
+            std::fprintf(stderr, "MirrorPSX Vulkan: upload fence wait failed: %d\n", int(wait));
             return false;
+        }
         upload_in_flight_ = false;
     }
     const auto bytes = VkDeviceSize(frame.rgba.size());

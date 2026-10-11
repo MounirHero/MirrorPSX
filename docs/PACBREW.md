@@ -51,6 +51,19 @@ which must be audited before distribution in an AirPlay-enabled title.
 
 ## Remaining dependencies / actual console gates
 
+The `airplay-exp-08-license-audit` packaging path now copies unmodified
+license text files from the existing UxPlay, llhttp, playfair and pinned
+libplist source checkouts into `assets/licenses/dependency-*`. The PKG
+manifest records the SHA-256 of each bundled text, and five copied texts
+were verified against their manifest hashes. Font licenses remain packaged
+separately. **This is not a complete redistribution audit:** PacBrew's
+FFmpeg/x264, OpenSSL, libiconv and other statically linked components still
+need their exact source revisions, build configurations, attribution and
+corresponding license obligations reviewed before any public release.
+In particular, x264 and GPL components can impose source-availability
+requirements. A structurally valid PKG is not a license clearance.
+
+
 UxPlay requires `libplist` as well as FFmpeg/OpenSSL and DNS-SD/Bonjour.
 The examined PacBrew image contains the FFmpeg and OpenSSL archives but does
 **not** contain a libplist archive. Upstream `libplist 2.7.0` was subsequently

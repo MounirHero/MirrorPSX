@@ -2,6 +2,28 @@
 
 ## Verified versus planned
 
+### WSI and receiver hardening, 2026-10-11
+
+The latest separately staged `MPSX00001` UI-only package is now
+`runtime-05-wsi-guard`. Before creating a device or asking Dear ImGui's
+convenience helpers for a swapchain, the native host checks available
+instance and device extensions, surface image counts, allowed color attachment
+usage, compositing flags, permitted extents, and nonempty/bounded surface
+format and present mode lists. It logs GPU selection, controller state changes
+and the first **submission for presentation**. The television image has not
+been observed on hardware. Its splash hide is still best effort.
+
+The separate `MPSX00002` `airplay-exp-08-license-audit` build includes
+malformed-RTSP-pairing input bounds checks, UxPlay partial-init cleanup and
+FFmpeg `EAGAIN` drain-then-retry (rather than dropping the packet), as well
+as a guarded video upload queue/fence and no stale texture descriptor on an
+upload error. Windows native CTest passes **9/9**; independent UI-only and
+Vulkan UI variants pass **2/2** each. Both PS5 PKGs pass structural
+validation with zero errors and warnings, but neither has been installed,
+launched or tested for live mirroring on a console. AirPlay remains
+experimental until multicast/RTSP/decoder and GPU output actually work.
+
+
 ### Runtime diagnostics / pairing hardening (2026-10-11)
 
 The isolated `runtime-03-diagnostic` PS5 UI-only package now logs startup

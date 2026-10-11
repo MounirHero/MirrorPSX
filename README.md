@@ -6,6 +6,17 @@ FFmpeg, and presents frames with a GLFW/Vulkan/Dear ImGui desktop interface.
 
 ## Project status
 
+**PS5 integration checkpoint (11 October 2026):** two fresh, isolated native
+PKGs passed structural validation and were staged on an authorized PS5 with
+matching SHA-256 readback: `runtime-05-wsi-guard` (UI-only `MPSX00001`)
+and `airplay-exp-08-license-audit` (experimental `MPSX00002`). They have **not**
+been installed or booted on hardware. The latter now validates malformed
+pairing inputs, retries FFmpeg packets after `EAGAIN`, and bundles additional
+third-party license texts. Windows CTest currently passes **9/9**, including
+regressions for RAOP init/stop and malformed pairing. See
+[PS5 runtime evidence and exact current hashes](docs/PS5_RUNTIME.md).
+
+
 The desktop application builds on Windows with MSYS2 MinGW64. Its actual UI
 draws through Vulkan (Dear ImGui's Vulkan backend), **not a WebView or a mocked
 console screen**. It features a TV-readable, responsive player, controller

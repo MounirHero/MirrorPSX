@@ -19,6 +19,8 @@ class VideoTexture {
     VkCommandBuffer command_=VK_NULL_HANDLE;
     VkFence upload_fence_=VK_NULL_HANDLE;
     bool upload_in_flight_=false;
+    VkQueue upload_queue_=VK_NULL_HANDLE;
+    uint32_t upload_family_=UINT32_MAX;
     int width_=0, height_=0;
     bool initialized_=false;
     void destroy_image();
