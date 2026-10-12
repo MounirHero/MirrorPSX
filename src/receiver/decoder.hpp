@@ -10,6 +10,7 @@ class Decoder {
     AVFrame* frame_=nullptr;
     SwsContext* scale_=nullptr;
     State& state_;
+    bool receive_frames();
 public:
     explicit Decoder(State& state):state_(state) {}
     ~Decoder();

@@ -16,8 +16,21 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_vulkan.h"
+#include "platform/video_texture.hpp"
+#include "receiver/airplay.hpp"
+#include "ui/screen.hpp"
+#include "ui/icons.hpp"
 #include <stdio.h>          // printf, fprintf
 #include <stdlib.h>         // abort
+#include <memory>
+#include <cstring>
+#include <filesystem>
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #define GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -193,7 +206,7 @@ static void SetupVulkan(ImVector<const char*> instance_extensions)
     {
         VkDescriptorPoolSize pool_sizes[] =
         {
-            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, IMGUI_IMPL_VULKAN_MINIMUM_IMAGE_SAMPLER_POOL_SIZE },
+            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, IMGUI_IMPL_VULKAN_MINIMUM_SAMPLER_POOL_SIZE + 128 },
         };
         VkDescriptorPoolCreateInfo pool_info = {};
         pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -239,7 +252,7 @@ static void SetupVulkanWindow(ImGui_ImplVulkanH_Window* wd, VkSurfaceKHR surface
 
     // Create SwapChain, RenderPass, Framebuffer, etc.
     IM_ASSERT(g_MinImageCount >= 2);
-    ImGui_ImplVulkanH_CreateOrResizeWindow(g_Instance, g_PhysicalDevice, g_Device, wd, g_QueueFamily, g_Allocator, width, height, g_MinImageCount);
+    ImGui_ImplVulkanH_CreateOrResizeWindow(g_Instance, g_PhysicalDevice, g_Device, wd, g_QueueFamily, g_Allocator, width, height, g_MinImageCount, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
 }
 
 static void CleanupVulkan()
@@ -349,15 +362,43 @@ static void FramePresent(ImGui_ImplVulkanH_Window* wd)
 }
 
 // Main code
-int main(int, char**)
+int main(int argc, char** argv)
 {
+    // Diagnostic mode draws the actual Vulkan UI with a synthetic pairing
+    // request, without advertising an AirPlay server or using a real PIN.
+    // This makes repeatable visual QA possible while another receiver runs.
+    bool preview_pairing = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--preview-pairing") == 0) {
+            preview_pairing = true;
+        } else {
+            std::fprintf(stderr, "Unknown argument: %s\n", argv[i]);
+            return 2;
+        }
+    }
+#if defined(_WIN32)
+    // GLFW and ImGui must agree on *physical* window dimensions. Without a
+    // DPI-aware process Windows may report a 3840-wide virtual window on a
+    // 2560-wide 150% monitor, clipping the entire right side (including PIN).
+    // Resolve dynamically: some MinGW SDK builds do not expose the declaration
+    // even though the function is available on Windows 10/11.
+    using SetDpiContextFn = BOOL (WINAPI*)(HANDLE);
+    const auto set_dpi_context = reinterpret_cast<SetDpiContextFn>(
+        GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetProcessDpiAwarenessContext"));
+    if (!set_dpi_context ||
+        !set_dpi_context(reinterpret_cast<HANDLE>(static_cast<intptr_t>(-4))))
+        SetProcessDPIAware(); // Fallback for older Windows builds.
+#endif
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit())
         return 1;
 
     // Create window with Vulkan context
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "Dear ImGui GLFW+Vulkan example", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(1280, 720,
+        preview_pairing ? "MirrorPSX [Synthetic PIN Preview]" : "MirrorPSX",
+        nullptr, nullptr);
+    if (!window) { glfwTerminate(); return 1; }
     if (!glfwVulkanSupported())
     {
         printf("GLFW: Vulkan Not Supported\n");
@@ -388,9 +429,27 @@ int main(int, char**)
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+    // Licensed app assets are shared with the future console host.
+    // No dependency on platform-installed Segoe/SF/other proprietary fonts.
+    std::filesystem::path assets_root = "assets/fonts";
+    if (!std::filesystem::exists(assets_root / "Figtree-400.ttf")) {
+#if defined(_WIN32)
+        wchar_t executable[MAX_PATH]{};
+        if (GetModuleFileNameW(nullptr, executable, MAX_PATH) != 0)
+            assets_root = std::filesystem::path(executable).parent_path() / "assets/fonts";
+#endif
+    }
+    const std::string regular_path = (assets_root / "Figtree-400.ttf").string();
+    const std::string semibold_path = (assets_root / "Figtree-650.ttf").string();
+    const std::string icon_path = (assets_root / "fa-solid-900.ttf").string();
+    ImFont* regular_font = io.Fonts->AddFontFromFileTTF(regular_path.c_str(), 26.0f);
+    if (!regular_font) regular_font = io.Fonts->AddFontDefaultVector();
+    ImFont* semibold_font = io.Fonts->AddFontFromFileTTF(semibold_path.c_str(), 26.0f);
+    if (!semibold_font) semibold_font = regular_font;
+    ImFont* icon_font = io.Fonts->AddFontFromFileTTF(icon_path.c_str(), 30.0f, nullptr, mirror::icons::font_ranges);
 
     // Setup Dear ImGui style
-    ImGui::StyleColorsDark();
+    mirror::apply_screen_style(regular_font, semibold_font, icon_font);
     //ImGui::StyleColorsLight();
 
     // Setup Platform/Renderer backends
@@ -404,11 +463,11 @@ int main(int, char**)
     init_info.Queue = g_Queue;
     init_info.PipelineCache = g_PipelineCache;
     init_info.DescriptorPool = g_DescriptorPool;
-    init_info.RenderPass = wd->RenderPass;
-    init_info.Subpass = 0;
+    init_info.PipelineInfoMain.RenderPass = wd->RenderPass;
+    init_info.PipelineInfoMain.Subpass = 0;
     init_info.MinImageCount = g_MinImageCount;
     init_info.ImageCount = wd->ImageCount;
-    init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    init_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
     init_info.Allocator = g_Allocator;
     init_info.CheckVkResultFn = check_vk_result;
     ImGui_ImplVulkan_Init(&init_info);
@@ -430,9 +489,21 @@ int main(int, char**)
     //IM_ASSERT(font != nullptr);
 
     // Our state
-    bool show_demo_window = true;
-    bool show_another_window = false;
-    ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+    ImVec4 clear_color = ImVec4(0.06f, 0.07f, 0.09f, 1.00f);
+    mirror::State state;
+    mirror::AirPlay receiver(state);
+    if (preview_pairing) {
+        state.update([](mirror::Snapshot& status) {
+            status.name = "MirrorPSX UI Preview";
+            status.listening = true;
+            status.pin = "0047"; // Not an AirPlay authentication secret.
+        });
+    } else {
+        receiver.start();
+    }
+    auto texture = std::make_unique<mirror::VideoTexture>(g_PhysicalDevice,g_Device);
+    mirror::ScreenUiState screen_ui;
+    uint64_t last_frame = 0;
 
     // Main loop
     while (!glfwWindowShouldClose(window))
@@ -450,7 +521,7 @@ int main(int, char**)
         if (fb_width > 0 && fb_height > 0 && (g_SwapChainRebuild || g_MainWindowData.Width != fb_width || g_MainWindowData.Height != fb_height))
         {
             ImGui_ImplVulkan_SetMinImageCount(g_MinImageCount);
-            ImGui_ImplVulkanH_CreateOrResizeWindow(g_Instance, g_PhysicalDevice, g_Device, &g_MainWindowData, g_QueueFamily, g_Allocator, fb_width, fb_height, g_MinImageCount);
+            ImGui_ImplVulkanH_CreateOrResizeWindow(g_Instance, g_PhysicalDevice, g_Device, &g_MainWindowData, g_QueueFamily, g_Allocator, fb_width, fb_height, g_MinImageCount, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
             g_MainWindowData.FrameIndex = 0;
             g_SwapChainRebuild = false;
         }
@@ -463,43 +534,41 @@ int main(int, char**)
         // Start the Dear ImGui frame
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
+        static int logged_w = -1, logged_h = -1;
+        if (std::getenv("MIRRORPSX_DIAGNOSTICS")) {
+            int ww = 0, wh = 0, fw = 0, fh = 0;
+            float sx = 0, sy = 0;
+            glfwGetWindowSize(window, &ww, &wh);
+            glfwGetFramebufferSize(window, &fw, &fh);
+            glfwGetWindowContentScale(window, &sx, &sy);
+            if (ww != logged_w || wh != logged_h) {
+                std::fprintf(stderr, "MIRROR_DIAG window=%dx%d framebuffer=%dx%d scale=%.3f,%.3f imgui=%.1fx%.1f fb_scale=%.2f,%.2f\n",
+                    ww, wh, fw, fh, sx, sy, io.DisplaySize.x, io.DisplaySize.y,
+                    io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
+                logged_w = ww; logged_h = wh;
+            }
+        }
         ImGui::NewFrame();
 
-        // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
-        if (show_demo_window)
-            ImGui::ShowDemoWindow(&show_demo_window);
-
-        // 2. Show a simple window that we create ourselves. We use a Begin/End pair to create a named window.
-        {
-            static float f = 0.0f;
-            static int counter = 0;
-
-            ImGui::Begin("Hello, world!");                          // Create a window called "Hello, world!" and append into it.
-
-            ImGui::Text("This is some useful text.");               // Display some text (you can use a format strings too)
-            ImGui::Checkbox("Demo Window", &show_demo_window);      // Edit bools storing our window open/close state
-            ImGui::Checkbox("Another Window", &show_another_window);
-
-            ImGui::SliderFloat("float", &f, 0.0f, 1.0f);            // Edit 1 float using a slider from 0.0f to 1.0f
-            ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
-
-            if (ImGui::Button("Button"))                            // Buttons return true when clicked (most widgets return true when edited/activated)
-                counter++;
-            ImGui::SameLine();
-            ImGui::Text("counter = %d", counter);
-
-            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
-            ImGui::End();
+        // Consume the newest frame without blocking the receiver callback.
+        mirror::VideoFrame next;
+        if(state.frame_after(last_frame,next)) {
+            last_frame=next.sequence;
+            if(!texture->upload(g_Queue,g_QueueFamily,next))
+                state.update([](auto& s){s.error="Video texture upload failed";});
         }
-
-        // 3. Show another simple window.
-        if (show_another_window)
-        {
-            ImGui::Begin("Another Window", &show_another_window);   // Pass a pointer to our bool variable (the window will have a closing button that will clear the bool when clicked)
-            ImGui::Text("Hello from another window!");
-            if (ImGui::Button("Close Me"))
-                show_another_window = false;
-            ImGui::End();
+        const auto status=state.snapshot();
+        // The screen state and the Vulkan texture must agree. Otherwise an
+        // interrupted AirPlay session leaves the previous screen in GPU memory
+        // until a different resolution is uploaded or the app exits.
+        if (!status.width || !status.height) texture->clear();
+        const auto handle = status.width && status.height
+            ? static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(texture->descriptor()))
+            : ImTextureID_Invalid;
+        switch(mirror::render_screen(status,handle,texture->width(),texture->height(),screen_ui)) {
+            case mirror::ScreenAction::start: receiver.start(); break;
+            case mirror::ScreenAction::stop: receiver.stop(); break;
+            case mirror::ScreenAction::none: break;
         }
 
         // Rendering
@@ -518,6 +587,8 @@ int main(int, char**)
     }
 
     // Cleanup
+    receiver.stop();
+    texture.reset();
     err = vkDeviceWaitIdle(g_Device);
     check_vk_result(err);
     ImGui_ImplVulkan_Shutdown();
