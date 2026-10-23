@@ -4,13 +4,13 @@
 #include "receiver/state.hpp"
 struct AVCodecContext;
 struct AVFrame;
-struct SwsContext;
 namespace mirror {
 class Decoder {
   AVCodecContext *context_ = nullptr;
   AVFrame *frame_ = nullptr;
   FrameConverter converter_;
   State &state_;
+  bool receive_frames();
 
 public:
   Decoder(const Decoder &) = delete;

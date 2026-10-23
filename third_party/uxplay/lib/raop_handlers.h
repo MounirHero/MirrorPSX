@@ -302,7 +302,16 @@ raop_handler_pairsetup_pin(raop_conn_t *conn,
 
     /* process the pair-setup-pin request */
     plist_t req_root_node = NULL;
-    plist_from_bin(request_data, request_datalen, &req_root_node);
+    if (!request_data || request_datalen <= 0) {
+        goto authentication_failed;
+    }
+    /* libplist <2.3 exposed a void-returning parser; inspect its output
+     * instead of depending on the newer plist_err_t return ABI. */
+    plist_from_bin(request_data, (uint32_t) request_datalen, &req_root_node);
+    if (!PLIST_IS_DICT(req_root_node)) {
+        plist_free(req_root_node);
+        goto authentication_failed;
+    }
     plist_t req_method_node = plist_dict_get_item(req_root_node, "method");
     plist_t req_user_node = plist_dict_get_item(req_root_node, "user");
     plist_t req_pk_node = plist_dict_get_item(req_root_node, "pk");
@@ -319,16 +328,21 @@ raop_handler_pairsetup_pin(raop_conn_t *conn,
         char *method = NULL;
         char *user = NULL;
         plist_get_string_val(req_method_node, &method);
-        if (strncmp(method, "pin", strlen (method))) {
-            logger_log(raop->logger, LOGGER_ERR, "error, required method is \"pin\", client requested \"%s\"", method);
-            free (method);
-            plist_free (req_root_node);
-            return;
+        if (!method || strcmp(method, "pin") != 0) {
+            logger_log(raop->logger, LOGGER_ERR, "pair-setup-pin: unsupported authentication method");
+            plist_mem_free(method);
+            plist_free(req_root_node);
+            goto authentication_failed;
         }
         plist_mem_free(method);
         method = NULL;
         plist_get_string_val(req_user_node, &user);
-        logger_log(raop->logger, LOGGER_INFO, "pair-setup-pin:  device_id = %s", user);
+        if (!user || !*user) {
+            plist_mem_free(user);
+            plist_free(req_root_node);
+            goto authentication_failed;
+        }
+        logger_log(raop->logger, LOGGER_INFO, "pair-setup-pin: client identifier supplied");
         snprintf(pin, 6, "%04u", raop->pin % 10000);
         /* Pairing can retry on a new TCP connection. Keep the visible
          * challenge until a fresh PIN-start or successful confirmation. */

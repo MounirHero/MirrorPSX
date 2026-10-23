@@ -351,9 +351,9 @@ struct ed25519_key_s {
 ed25519_key_t *ed25519_key_generate(const char *device_id, const char *keyfile, int *result) {
     EVP_PKEY_CTX *pctx = NULL;
     BIO *bp = NULL;
-    FILE *file = NULL;
     bool new_pk = false;
-    bool use_keyfile = strlen(keyfile);
+    bool use_keyfile = keyfile && keyfile[0];
+    (void)device_id;
 
     *result = 0;
 
@@ -361,12 +361,10 @@ ed25519_key_t *ed25519_key_generate(const char *device_id, const char *keyfile, 
     assert(key);
    
     if (use_keyfile) {
-        file = fopen(keyfile, "r");
-        if (file) {
-            bp = BIO_new_fp(file, BIO_NOCLOSE);
-            key->pkey = PEM_read_PrivateKey(file, NULL, NULL, NULL);
+        bp = BIO_new_file(keyfile, "r");
+        if (bp) {
+            key->pkey = PEM_read_bio_PrivateKey(bp, NULL, NULL, NULL);
             BIO_free(bp);
-            fclose(file);
             if (!key->pkey) {
                 new_pk = true;
             }
@@ -374,15 +372,10 @@ ed25519_key_t *ed25519_key_generate(const char *device_id, const char *keyfile, 
             new_pk = true;
         }
     } else {
-        /* generate (insecure) persistent keypair using device_id */
-        unsigned char hash[SHA512_DIGEST_LENGTH] = {0};
-        char salt[] = SALT_PK;
-        sha_ctx_t *ctx = sha_init();
-        sha_update(ctx, (const unsigned char *) salt, (unsigned int) strlen(salt));
-        sha_update(ctx, (const unsigned char *) device_id, (unsigned int) strlen(device_id));
-        sha_final(ctx, hash, NULL);
-        sha_destroy(ctx);
-        key->pkey = EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, NULL, (const unsigned char *) hash, ED25519_KEY_SIZE);
+        /* No writable private key file: create an unpredictable *ephemeral*
+         * identity. Deriving a private key from the public device_id makes
+         * the receiver's identity forgeable, especially with a fixed ID. */
+        new_pk = true;
     }
 
     if (new_pk) {
@@ -398,12 +391,10 @@ ed25519_key_t *ed25519_key_generate(const char *device_id, const char *keyfile, 
         }
         EVP_PKEY_CTX_free(pctx);
         if (use_keyfile) {
-            file = fopen(keyfile, "w");
-            if (file) {
-                bp = BIO_new_fp(file, BIO_NOCLOSE);
+            bp = BIO_new_file(keyfile, "w");
+            if (bp) {
                 PEM_write_bio_PrivateKey(bp, key->pkey, NULL, NULL, 0, NULL, NULL);
                 BIO_free(bp);
-                fclose(file);
                 *result = 1;
             }
         }

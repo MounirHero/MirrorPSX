@@ -556,7 +556,9 @@ int
 srp_validate_proof(pairing_session_t *session, pairing_t *pairing, const unsigned char *A,
                    int len_A, unsigned char *proof, int proof_len) {
     if (!session || !session->srp || !A || !proof || len_A <= 0 ||
-        len_A > SRP_VERIFIER_SIZE || proof_len != 20) return -1;
+        len_A > SRP_VERIFIER_SIZE || proof_len != 20) {
+        return -1;
+    }
     int authenticated  = 0;
     const unsigned char *B =  NULL;
     const unsigned char *b = session->srp->private_key;
@@ -572,7 +574,6 @@ srp_validate_proof(pairing_session_t *session, pairing_t *pairing, const unsigne
                                                     A, len_A,
                                                     b, len_b,
                                                     &B, &len_B, NULL, NULL, 1);
-
     if (!verifier) return -1;
     srp_verifier_verify_session(verifier, proof, &M2);
     authenticated = srp_verifier_is_authenticated(verifier);
@@ -596,6 +597,7 @@ srp_validate_proof(pairing_session_t *session, pairing_t *pairing, const unsigne
 int
 srp_confirm_pair_setup(pairing_session_t *session, pairing_t *pairing,
                        unsigned char *epk, unsigned char *auth_tag) {
+    if (!session || !session->srp || !epk || !auth_tag) return -1;
     unsigned char aesKey[16] = {0}, aesIV[16] = {0};
     unsigned char hash[SHA512_DIGEST_LENGTH] = {0};
     unsigned char pk[ED25519_KEY_SIZE] = {0};

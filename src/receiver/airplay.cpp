@@ -26,6 +26,14 @@ void AirPlay::flush() {
   decoder_.flush();
   state_.update([](auto &s) { s.connected = false; });
 }
+void AirPlay::stream_running(bool running) {
+  if (running) {
+    state_.update([](auto &s) { s.pin.clear(); });
+  } else {
+    // Never leave a frozen last frame marked as LIVE after a stream ends.
+    flush();
+  }
+}
 bool AirPlay::start(const std::string &name) {
   stop();
   state_.update([&](auto &s) {
@@ -57,16 +65,18 @@ bool AirPlay::start(const std::string &name) {
     static_cast<AirPlay *>(p)->video(v->data, v->data_len);
   };
   cb.audio_process = [](void *, raop_ntp_t *, audio_decode_struct *) {};
-  cb.conn_init = [](void *p) { ++static_cast<AirPlay *>(p)->connections_; };
+  cb.conn_init = [](void *p) {
+    auto *a = static_cast<AirPlay *>(p);
+    a->connections_.opened(a->state());
+  };
   // Pairing closes its first control socket before the user enters the PIN.
   // Keep that PIN visible until video arrives, a new PIN replaces it, or
   // stop().
   cb.conn_destroy = [](void *p) {
     auto *a = static_cast<AirPlay *>(p);
-    if (a->connections_.fetch_sub(1) == 1) {
+    a->connections_.closed(a->state());
+    if (a->connections_.active() == 0)
       a->flush();
-      a->state().update([](auto &s) { s.client.clear(); });
-    }
   };
   cb.report_client_request = [](void *p, char *, char *, char *name,
                                 bool *admit) {
@@ -77,6 +87,9 @@ bool AirPlay::start(const std::string &name) {
   cb.display_pin = [](void *p, char *pin) {
     static_cast<AirPlay *>(p)->state().update(
         [&](auto &s) { s.pin = pin ? pin : ""; });
+  };
+  cb.mirror_video_running = [](void *p, bool running) {
+    static_cast<AirPlay *>(p)->stream_running(running);
   };
   cb.video_set_codec = [](void *p, video_codec_t c) {
     return static_cast<AirPlay *>(p)->codec(c == VIDEO_CODEC_H265);
@@ -96,7 +109,9 @@ bool AirPlay::start(const std::string &name) {
   cb.audio_set_client_volume = [](void *) { return 0.0; };
   cb.video_report_size = [](void *, float *, float *, float *, float *) {};
   cb.check_register = [](void *, const char *) { return false; };
-  cb.register_client = [](void *, const char *, const char *, const char *) {};
+  cb.register_client = [](void *p, const char *, const char *, const char *) {
+    static_cast<AirPlay *>(p)->state().update([](auto &s) { s.pin.clear(); });
+  };
   cb.passwd = [](void *, int *len) -> const char * {
     *len = 0;
     return nullptr;
@@ -212,6 +227,7 @@ void AirPlay::stop() {
     discovery_ = nullptr;
   }
   flush();
+  connections_.reset(state_);
   state_.update([](auto &s) {
     s.listening = false;
     s.connected = false;
