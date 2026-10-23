@@ -210,6 +210,12 @@ netutils_init_socket(unsigned short *port, int use_ipv6, int use_udp)
 int
 netutils_parse_address(int family, const char *src, void *dst, int dstlen)
 {
+#ifdef MIRROR_PS5
+    /* Native platform getaddrinfo supports IPv4 only. Peer addresses are
+     * numeric: bypass DNS and preserve the link-local IPv6 scope directly. */
+    extern int mirror_parse_numeric_address(int, const char *, void *, int);
+    return mirror_parse_numeric_address(family, src, dst, dstlen);
+#else
     struct addrinfo *result;
     struct addrinfo *ptr;
     struct addrinfo hints;
@@ -240,4 +246,5 @@ netutils_parse_address(int family, const char *src, void *dst, int dstlen)
     }
     freeaddrinfo(result);
     return length;
+#endif
 }

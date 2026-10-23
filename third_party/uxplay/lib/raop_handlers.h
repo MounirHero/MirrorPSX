@@ -271,6 +271,9 @@ raop_handler_pairpinstart(raop_conn_t *conn,
          raop->callbacks.display_pin(raop->callbacks.cls, pin);
     }
     logger_log(raop->logger, LOGGER_INFO, "*** CLIENT MUST NOW ENTER PIN = \"%s\" AS AIRPLAY PASSWORD", pin);
+    /* Apple clients must know the PIN-start response is complete without
+     * waiting for a connection close or a body timeout. */
+    http_response_add_header(response, "Content-Length", "0");
 }
 
 static void
@@ -327,9 +330,8 @@ raop_handler_pairsetup_pin(raop_conn_t *conn,
         plist_get_string_val(req_user_node, &user);
         logger_log(raop->logger, LOGGER_INFO, "pair-setup-pin:  device_id = %s", user);
         snprintf(pin, 6, "%04u", raop->pin % 10000);
-        if (raop->pin < 10000) {
-            raop->pin = 0;
-        }
+        /* Pairing can retry on a new TCP connection. Keep the visible
+         * challenge until a fresh PIN-start or successful confirmation. */
         int ret = srp_new_user(conn->session, raop->pairing, (const char *) user,
                                (const char *) pin, &salt, &len_salt, &pk, &len_pk);
         plist_mem_free(user);
@@ -352,12 +354,19 @@ raop_handler_pairsetup_pin(raop_conn_t *conn,
         /* this is the second part of pair-setup-pin request */
         char *client_pk = NULL;
         char *client_proof = NULL;
-        unsigned char proof[64] = { '\0' };
+        unsigned char proof[20] = { '\0' }; /* SHA-1 SRP proof, not SHA-512 */
         memset(proof, 0, sizeof(proof));
         uint64_t client_pk_len = 0;
         uint64_t client_proof_len = 0;
         plist_get_data_val(req_pk_node, &client_pk, &client_pk_len); 
         plist_get_data_val(req_proof_node, &client_proof, &client_proof_len);
+        if (!client_pk || !client_proof || client_pk_len == 0 ||
+            client_pk_len > SRP_VERIFIER_SIZE || client_proof_len != sizeof(proof)) {
+            plist_mem_free(client_pk);
+            plist_mem_free(client_proof);
+            plist_free(req_root_node);
+            goto authentication_failed;
+        }
         if (logger_debug) {
             char *str = utils_data_to_string((const unsigned char *) client_proof, client_proof_len, 20);
             logger_log(raop->logger, LOGGER_DEBUG, "client SRP6a proof <M> :\n%s", str);	    
@@ -418,6 +427,7 @@ raop_handler_pairsetup_pin(raop_conn_t *conn,
             logger_log(raop->logger, LOGGER_DEBUG, "pair-pin-setup success\n");
         }
         pairing_session_set_setup_status(conn->session);
+        if (raop->pin < 10000) raop->pin = 0;
         plist_t res_root_node = plist_new_dict();
         plist_t res_epk_node = plist_new_data((const char *) epk, 32);
         plist_t res_authtag_node = plist_new_data((const char *) authtag, 16);
@@ -910,7 +920,7 @@ raop_handler_setup(raop_conn_t *conn,
         conn->raop_ntp = NULL;
         conn->raop_rtp = NULL;
         conn->raop_rtp_mirror = NULL;
-        char remote[40] = { 0 };
+        char remote[80] = { 0 };
         int len = utils_ipaddress_to_string(conn->remotelen, conn->remote, conn->zone_id, remote, (int) sizeof(remote));
         if (!len || len > (int) sizeof(remote)) {
             char *str = utils_data_to_string(conn->remote, conn->remotelen, 16);
@@ -922,6 +932,14 @@ raop_handler_setup(raop_conn_t *conn,
         }
         conn->raop_ntp = raop_ntp_init(raop->logger, &raop->callbacks, remote,
                                        conn->remotelen, (unsigned short) timing_rport, &time_protocol);
+        if (!conn->raop_ntp) {
+            logger_log(raop->logger, LOGGER_ERR, "SETUP: cannot initialize timing peer %s", remote);
+            http_response_init(response, "RTSP/1.0", 500, "Internal Server Error");
+            http_response_set_disconnect(response, 1);
+            plist_free(res_root_node);
+            plist_free(req_root_node);
+            return;
+        }
         raop_ntp_start(conn->raop_ntp, &timing_lport);
         conn->raop_rtp = raop_rtp_init(raop->logger, &raop->callbacks, conn->raop_ntp,
                                        remote, conn->remotelen, aeskey, aesiv);

@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #ifndef WIN32
 #include <ifaddrs.h>
@@ -65,9 +66,23 @@ struct mdnsd_s {
     int sock_fd4;
     int sock_fd6;
     int running;
+    uint64_t next_announcement;
+    unsigned int announcement_interval;
+    unsigned int announcements_remaining;
     thread_handle_t thread;
     mutex_handle_t mutex;
 };
+
+static uint64_t mdns_now_ms(void)
+{
+#ifdef _WIN32
+    return GetTickCount64();
+#else
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint64_t) now.tv_sec * 1000 + now.tv_nsec / 1000000;
+#endif
+}
 
 static int mdns_put_u8(mdns_packet_t *packet, unsigned int value)
 {
@@ -401,6 +416,9 @@ static uint32_t mdns_get_default_ipv4(void)
     }
 
     memset(&remote, 0, sizeof(remote));
+#ifdef MIRROR_PS5
+    remote.sin_len = sizeof(remote);
+#endif
     remote.sin_family = AF_INET;
     remote.sin_port = htons(MDNS_PORT);
     inet_pton(AF_INET, MDNS_ADDR4, &remote.sin_addr);
@@ -409,6 +427,20 @@ static uint32_t mdns_get_default_ipv4(void)
         getsockname(fd, (struct sockaddr *) &local, &local_len) == 0) {
         addr = local.sin_addr.s_addr;
     }
+#ifdef MIRROR_PS5
+    if (!addr) {
+        /* Native-title multicast routing may be refused. Like Hyperion's
+         * network_status, query the default unicast route without sending
+         * traffic. Multicast membership is still required below. */
+        fprintf(stderr, "[mDNS] multicast route failed: errno=%d\n", errno);
+        remote.sin_port = htons(53);
+        remote.sin_addr.s_addr = htonl(0x08080808);
+        local_len = sizeof(local);
+        if (connect(fd, (struct sockaddr *) &remote, sizeof(remote)) == 0 &&
+            getsockname(fd, (struct sockaddr *) &local, &local_len) == 0)
+            addr = local.sin_addr.s_addr;
+    }
+#endif
 
     CLOSESOCKET(fd);
 #endif
@@ -487,6 +519,7 @@ static int mdns_open_socket4(uint32_t iface_addr)
 
     fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd == -1) {
+        fprintf(stderr, "[mDNS] IPv4 socket failed: errno=%d\n", SOCKET_GET_ERROR());
         return -SOCKET_GET_ERROR();
     }
 
@@ -504,12 +537,16 @@ static int mdns_open_socket4(uint32_t iface_addr)
     }
 
     memset(&addr, 0, sizeof(addr));
+#ifdef MIRROR_PS5
+    addr.sin_len = sizeof(addr);
+#endif
     addr.sin_family = AF_INET;
     addr.sin_port = htons(MDNS_PORT);
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     if (bind(fd, (struct sockaddr *) &addr, sizeof(addr)) == -1) {
         int error = SOCKET_GET_ERROR();
+        fprintf(stderr, "[mDNS] IPv4 bind UDP/5353 failed: errno=%d\n", error);
         CLOSESOCKET(fd);
         return -error;
     }
@@ -520,6 +557,7 @@ static int mdns_open_socket4(uint32_t iface_addr)
     if (setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP,
                    (const char *) &mreq, sizeof(mreq)) == -1) {
         int error = SOCKET_GET_ERROR();
+        fprintf(stderr, "[mDNS] IPv4 multicast membership failed: errno=%d\n", error);
         if (iface_addr) {
             mreq.imr_interface.s_addr = htonl(INADDR_ANY);
             if (setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP,
@@ -562,6 +600,9 @@ static int mdns_open_socket6(unsigned int scope_id)
     setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_IF, (const char *) &scope_id, sizeof(scope_id));
 
     memset(&addr, 0, sizeof(addr));
+#ifdef MIRROR_PS5
+    addr.sin6_len = sizeof(addr);
+#endif
     addr.sin6_family = AF_INET6;
     addr.sin6_port = htons(MDNS_PORT);
     addr.sin6_addr = in6addr_any;
@@ -716,6 +757,9 @@ static void mdns_send_packet4(mdnsd_t *mdnsd, const mdns_packet_t *packet,
         addr = *to;
     } else {
         memset(&addr, 0, sizeof(addr));
+#ifdef MIRROR_PS5
+        addr.sin_len = sizeof(addr);
+#endif
         addr.sin_family = AF_INET;
         addr.sin_port = htons(MDNS_PORT);
         inet_pton(AF_INET, MDNS_ADDR4, &addr.sin_addr);
@@ -738,6 +782,9 @@ static void mdns_send_packet6(mdnsd_t *mdnsd, const mdns_packet_t *packet,
         addr = *to;
     } else {
         memset(&addr, 0, sizeof(addr));
+#ifdef MIRROR_PS5
+        addr.sin6_len = sizeof(addr);
+#endif
         addr.sin6_family = AF_INET6;
         addr.sin6_port = htons(MDNS_PORT);
         addr.sin6_scope_id = mdnsd->ipv6_scope_id;
@@ -936,6 +983,19 @@ static THREAD_RETVAL mdns_thread(void *arg)
             break;
         }
 
+        /* A single UDP announcement can be lost when joining Wi-Fi or sharing
+         * port 5353 with Bonjour. RFC 6762 section 8.3 permits bounded retries
+         * at exponentially increasing intervals, not periodic broadcasts. */
+        MUTEX_LOCK(mdnsd->mutex);
+        if (mdnsd->announcements_remaining &&
+            mdns_now_ms() >= mdnsd->next_announcement) {
+            mdns_announce_locked(mdnsd, MDNSD_TTL_SERVICE);
+            --mdnsd->announcements_remaining;
+            mdnsd->announcement_interval *= 2;
+            mdnsd->next_announcement = mdns_now_ms() + mdnsd->announcement_interval;
+        }
+        MUTEX_UNLOCK(mdnsd->mutex);
+
         FD_ZERO(&rfds);
         if (fd4 != -1) {
             FD_SET(fd4, &rfds);
@@ -1037,6 +1097,11 @@ int mdnsd_start(mdnsd_t *mdnsd)
 
     mdnsd->ipv4_addr = mdns_get_default_ipv4();
     mdns_get_default_ipv6(mdnsd->ipv6_addr, &mdnsd->ipv6_scope_id);
+    fprintf(stderr, "[mDNS] local IPv4=%u.%u.%u.%u IPv6-scope=%u\n",
+            (unsigned)(ntohl(mdnsd->ipv4_addr) >> 24),
+            (unsigned)((ntohl(mdnsd->ipv4_addr) >> 16) & 255),
+            (unsigned)((ntohl(mdnsd->ipv4_addr) >> 8) & 255),
+            (unsigned)(ntohl(mdnsd->ipv4_addr) & 255), mdnsd->ipv6_scope_id);
 
     mdnsd->sock_fd4 = mdns_open_socket4(mdnsd->ipv4_addr);
     if (mdnsd->sock_fd4 < 0) {
@@ -1051,6 +1116,7 @@ int mdnsd_start(mdnsd_t *mdnsd)
     }
 
     if (mdnsd->sock_fd4 == -1 && mdnsd->sock_fd6 == -1) {
+        fprintf(stderr, "[mDNS] no usable sockets: IPv4=%d IPv6=%d\n", error4, error6);
         MUTEX_UNLOCK(mdnsd->mutex);
         return error4 ? error4 : error6;
     }
@@ -1058,6 +1124,7 @@ int mdnsd_start(mdnsd_t *mdnsd)
     mdnsd->running = 1;
     THREAD_CREATE(mdnsd->thread, mdns_thread, mdnsd);
     if (!mdnsd->thread) {
+        fprintf(stderr, "[mDNS] responder thread creation failed\n");
         if (mdnsd->sock_fd4 != -1) {
             CLOSESOCKET(mdnsd->sock_fd4);
             mdnsd->sock_fd4 = -1;
@@ -1137,6 +1204,9 @@ void mdnsd_announce(mdnsd_t *mdnsd, uint32_t ttl)
 
     MUTEX_LOCK(mdnsd->mutex);
     mdns_announce_locked(mdnsd, ttl);
+    mdnsd->announcements_remaining = ttl ? 3 : 0;
+    mdnsd->announcement_interval = 1000;
+    mdnsd->next_announcement = mdns_now_ms() + 1000;
     MUTEX_UNLOCK(mdnsd->mutex);
 }
 

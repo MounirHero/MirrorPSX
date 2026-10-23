@@ -28,6 +28,9 @@
 #include "compat.h"
 #include "logger.h"
 #include "utils.h"
+#ifndef _WIN32
+#include <netinet/tcp.h>
+#endif
 
 static const char *typename[] = {
     [CONNECTION_TYPE_UNKNOWN] = "Unknown",
@@ -311,6 +314,10 @@ httpd_accept_connection(httpd_t *httpd, int server_fd, int is_ipv6)
         return -1;
     }
 
+    /* Control replies are small: avoid Nagle/delayed-ACK stalls during PIN
+     * pairing, without changing media transport or weakening authentication. */
+    int no_delay = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const char *)&no_delay, sizeof(no_delay));
     local_saddrlen = sizeof(local_saddr);
     ret = getsockname(fd, (struct sockaddr *)&local_saddr, &local_saddrlen);
     if (ret == -1) {

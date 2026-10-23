@@ -1,3 +1,4 @@
+// Adapted from Dear ImGui GLFW/Vulkan example (MIT).
 // Dear ImGui: standalone example application for Glfw + Vulkan
 
 // Learn about Dear ImGui:
@@ -14,6 +15,12 @@
 // Read comments in imgui_impl_vulkan.h.
 
 #include "imgui.h"
+#include "ui/screen.hpp"
+#include "receiver/airplay.hpp"
+#include "receiver/dlna.hpp"
+#include "platform/video_texture.hpp"
+#include <memory>
+#include <chrono>
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_vulkan.h"
 #include <stdio.h>          // printf, fprintf
@@ -193,7 +200,7 @@ static void SetupVulkan(ImVector<const char*> instance_extensions)
     {
         VkDescriptorPoolSize pool_sizes[] =
         {
-            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, IMGUI_IMPL_VULKAN_MINIMUM_IMAGE_SAMPLER_POOL_SIZE },
+            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 32 },
         };
         VkDescriptorPoolCreateInfo pool_info = {};
         pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -349,15 +356,18 @@ static void FramePresent(ImGui_ImplVulkanH_Window* wd)
 }
 
 // Main code
-int main(int, char**)
+int main(int argc, char** argv)
 {
+    const bool gpu_smoke=argc==2 && strcmp(argv[1],"--gpu-smoke")==0;
+    const bool start_dlna=argc==2 && strcmp(argv[1],"--dlna")==0;
+    const char* preview = gpu_smoke ? "video" : argc == 3 && strcmp(argv[1], "--ui-preview") == 0 ? argv[2] : nullptr;
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit())
         return 1;
 
     // Create window with Vulkan context
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "Dear ImGui GLFW+Vulkan example", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(1440, 810, "MirrorPSX", nullptr, nullptr);
     if (!glfwVulkanSupported())
     {
         printf("GLFW: Vulkan Not Supported\n");
@@ -430,9 +440,43 @@ int main(int, char**)
     //IM_ASSERT(font != nullptr);
 
     // Our state
-    bool show_demo_window = true;
-    bool show_another_window = false;
+    mirror::State state;
+    mirror::AirPlay receiver(state);
+    mirror::MediaPlayer media(state);
+    mirror::DlnaReceiver dlna(state, media);
+    mirror::Screen screen;
+    auto texture=std::make_unique<mirror::VideoTexture>(g_PhysicalDevice,g_Device,g_Queue,g_QueueFamily);
+    if (!preview && start_dlna){state.update([](auto&s){s.media_mode=true;});if(!dlna.start())state.update([](auto&s){s.error="Avvio DLNA fallito. Verifica la rete locale.";});}
+    else if (!preview) receiver.start("MirrorPSX - PC");
+    else {
+        glfwSetWindowTitle(window, "MirrorPSX | Anteprima UI");
+        state.update([&](auto& s) {
+            s.listening = strcmp(preview, "paused") != 0 && strcmp(preview, "error") != 0;
+            s.name = "MirrorPSX - Anteprima";
+            if (strcmp(preview, "pin") == 0) s.pin = "4826";
+            if (strcmp(preview, "error") == 0) s.error = "Ricevitore non disponibile. Verifica la rete locale e riprova.";
+            s.connected = strcmp(preview, "video") == 0 || strcmp(preview, "portrait") == 0;
+        });
+        if (state.snapshot().connected) {
+            mirror::VideoFrame frame;
+            const bool portrait = strcmp(preview, "portrait") == 0;
+            frame.width = portrait ? 360 : 640; frame.height = portrait ? 640 : 360;
+            frame.rgba.resize(frame.width * frame.height * 4);
+            for (int y = 0; y < frame.height; ++y) for (int x = 0; x < frame.width; ++x) {
+                const int i = (y * frame.width + x) * 4;
+                frame.rgba[i] = 15 + x * 80 / frame.width;
+                frame.rgba[i+1] = 45 + y * 125 / frame.height;
+                frame.rgba[i+2] = 140 + x * 90 / frame.width;
+                frame.rgba[i+3] = 255;
+            }
+            state.publish(std::move(frame));
+        }
+    }
+    io.IniFilename=nullptr;
+    if (!screen.initialize())
+        fprintf(stderr, "UI artwork unavailable; run from the repository root with assets/ui present.\n");
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+    int smoke_frames=0;double upload_ms=0;
 
     // Main loop
     while (!glfwWindowShouldClose(window))
@@ -465,41 +509,34 @@ int main(int, char**)
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
-        if (show_demo_window)
-            ImGui::ShowDemoWindow(&show_demo_window);
-
-        // 2. Show a simple window that we create ourselves. We use a Begin/End pair to create a named window.
-        {
-            static float f = 0.0f;
-            static int counter = 0;
-
-            ImGui::Begin("Hello, world!");                          // Create a window called "Hello, world!" and append into it.
-
-            ImGui::Text("This is some useful text.");               // Display some text (you can use a format strings too)
-            ImGui::Checkbox("Demo Window", &show_demo_window);      // Edit bools storing our window open/close state
-            ImGui::Checkbox("Another Window", &show_another_window);
-
-            ImGui::SliderFloat("float", &f, 0.0f, 1.0f);            // Edit 1 float using a slider from 0.0f to 1.0f
-            ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
-
-            if (ImGui::Button("Button"))                            // Buttons return true when clicked (most widgets return true when edited/activated)
-                counter++;
-            ImGui::SameLine();
-            ImGui::Text("counter = %d", counter);
-
-            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
-            ImGui::End();
+        if(gpu_smoke){
+            mirror::VideoFrame frame;
+            frame.width=smoke_frames<60?640:smoke_frames<120?1920:smoke_frames<180?360:1280;
+            frame.height=smoke_frames<60?360:smoke_frames<120?1080:smoke_frames<180?640:720;
+            frame.rgba.resize(size_t(frame.width)*frame.height*4,120);
+            for(size_t i=3;i<frame.rgba.size();i+=4)frame.rgba[i]=255;
+            state.publish(std::move(frame));
+            if(smoke_frames>=220 && smoke_frames<230){state.clear_frame();state.update([](auto&s){s.connected=false;});}
         }
-
-        // 3. Show another simple window.
-        if (show_another_window)
-        {
-            ImGui::Begin("Another Window", &show_another_window);   // Pass a pointer to our bool variable (the window will have a closing button that will clear the bool when clicked)
-            ImGui::Text("Hello from another window!");
-            if (ImGui::Button("Close Me"))
-                show_another_window = false;
-            ImGui::End();
+        auto upload_start=std::chrono::steady_clock::now();
+        texture->update(state);
+        if(gpu_smoke){upload_ms+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-upload_start).count();if(++smoke_frames==260)glfwSetWindowShouldClose(window,GLFW_TRUE);}
+        auto action=screen.draw(state.snapshot(),(ImTextureID)texture->descriptor());
+        if(action==mirror::Action::quit)glfwSetWindowShouldClose(window,GLFW_TRUE);
+        if(action==mirror::Action::toggle_mode){
+            bool mode=!state.snapshot().media_mode;
+            receiver.stop();dlna.stop();media.stop();
+            state.update([&](auto&s){s.media_mode=mode;});
+            if(!preview){
+                if(mode){if(!dlna.start())state.update([](auto&s){s.error="Avvio DLNA fallito. Verifica la rete locale.";});}
+                else receiver.start("MirrorPSX - PC");
+            }
+        }
+        if(action==mirror::Action::toggle_media){if(state.snapshot().media_paused)media.play();else media.pause();}
+        if(action==mirror::Action::toggle_receiver){
+            if (preview) state.update([](auto& s){s.listening=!s.listening;s.connected=false;s.pin.clear();s.error.clear();});
+            else if(state.snapshot().media_mode){if(state.snapshot().listening)dlna.stop();else if(!dlna.start())state.update([](auto&s){s.error="Avvio DLNA fallito. Verifica la rete locale.";});}
+            else if(state.snapshot().listening)receiver.stop();else receiver.start("MirrorPSX - PC");
         }
 
         // Rendering
@@ -518,8 +555,12 @@ int main(int, char**)
     }
 
     // Cleanup
+    if(gpu_smoke)fprintf(stderr,"[GPU smoke] 260 updates, resize/portrait/disconnect/reconnect, mean CPU upload %.3f ms\n",upload_ms/260);
     err = vkDeviceWaitIdle(g_Device);
     check_vk_result(err);
+    receiver.stop();
+    dlna.stop();media.stop();
+    texture.reset();
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

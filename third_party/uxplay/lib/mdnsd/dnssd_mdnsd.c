@@ -59,7 +59,7 @@ static void dnssd_sanitize_label(char *label)
     }
 }
 
-static void dnssd_make_host_name(char *dst, size_t dst_len)
+static void dnssd_make_host_name(char *dst, size_t dst_len, const char *identity)
 {
     char host[128];
 
@@ -68,7 +68,9 @@ static void dnssd_make_host_name(char *dst, size_t dst_len)
     }
     host[sizeof(host) - 1] = '\0';
     dnssd_sanitize_label(host);
-    snprintf(dst, dst_len, "%s.local", host);
+    /* Do not cache-flush Bonjour's machine hostname on multi-adapter Windows.
+     * This responder owns only its selected LAN address, not all host records. */
+    snprintf(dst, dst_len, "%.36s-MirrorPSX-%.12s.local", host, identity);
 }
 
 static int dnssd_prepare_names(dnssd_private_t *dnssd, dnssd_t *dnssd_public)
@@ -89,7 +91,7 @@ static int dnssd_prepare_names(dnssd_private_t *dnssd, dnssd_t *dnssd_public)
         return -1;
     }
 
-    dnssd_make_host_name(dnssd->host_name, sizeof(dnssd->host_name));
+    dnssd_make_host_name(dnssd->host_name, sizeof(dnssd->host_name), hwaddr);
     return 0;
 }
 
