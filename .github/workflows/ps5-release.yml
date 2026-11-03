@@ -1,0 +1,137 @@
+name: PS5 release artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Native package version (NN.NN)
+        required: true
+        default: '10.00'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ps5-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # Never expose SDK credentials to PRs, forks, or arbitrary dispatch branches.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    environment: main
+    timeout-minutes: 180
+    env:
+      OPENPROSPERO_SDK: ${{ github.workspace }}/_deps/sdk/sdk
+      OPENPROSPERO_CLANG: clang-19
+      OPENPROSPERO_LLD: ld.lld-19
+      OPENPROSPERO_AR: llvm-ar-19
+      OPENPROSPERO_STRIP: llvm-strip-19
+      MIRROR_PLATFORM_SOURCE: ${{ github.workspace }}/_deps/platform
+      MIRROR_MESA_SOURCE: ${{ github.workspace }}/_deps/mesa
+      MIRROR_RADV_ARCHIVE: ${{ github.workspace }}/_deps/sdk/build/ps5-mesa/release/lib/libvulkan_radeon.a
+      LLVM_CONFIG: llvm-config-19
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Check release configuration
+        env:
+          SDK_READ_TOKEN: ${{ secrets.OPENPROSPERO_READ_TOKEN }}
+          BROKER_TOKEN: ${{ secrets.MIRROR_BROKER_TOKEN }}
+          SDK_REF: ${{ vars.OPENPROSPERO_REF }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          required = ('SDK_READ_TOKEN', 'BROKER_TOKEN')
+          if any(not os.environ.get(name) for name in required):
+              raise SystemExit('Configure SDK read token and shared broker token as secrets in the main environment')
+          if os.environ.get('SDK_REF') and not re.fullmatch(r'[a-fA-F0-9]{40}', os.environ['SDK_REF']):
+              raise SystemExit('OPENPROSPERO_REF must be a full immutable commit SHA')
+          if not re.fullmatch(r'[0-9]{2}\.[0-9]{2}', os.environ['RELEASE_VERSION']):
+              raise SystemExit('Version must use NN.NN')
+          token = os.environ['BROKER_TOKEN']
+          if not re.fullmatch(r'[a-fA-F0-9]{8}', token) or int(token, 16) == 0:
+              raise SystemExit('Shared broker token must be eight hexadecimal digits with a nonzero value')
+          PY
+
+      - name: Import private OpenProspero SDK
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ vars.OPENPROSPERO_REPOSITORY || 'OpenProspero/sdk' }}
+          ref: ${{ vars.OPENPROSPERO_REF }}
+          token: ${{ secrets.OPENPROSPERO_READ_TOKEN }}
+          path: _deps/sdk
+          submodules: recursive
+          lfs: true
+          persist-credentials: false
+
+      - name: Record resolved SDK commit
+        run: |
+          SDK_COMMIT=$(git -C _deps/sdk rev-parse HEAD)
+          echo "OpenProspero commit: $SDK_COMMIT" >> "$GITHUB_STEP_SUMMARY"
+          echo "OPENPROSPERO_RESOLVED_COMMIT=$SDK_COMMIT" >> "$GITHUB_ENV"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config clang-19 lld-19 llvm-19-dev libclang-rt-19-dev \
+            libclang-19-dev libclc-19-dev libclc-19 libllvmspirvlib-19-dev spirv-tools \
+            glslang-tools zlib1g-dev libssl-dev libpng-dev libdrm-dev libexpat1-dev \
+            bison flex libzstd-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev \
+            libxi-dev libxinerama-dev libxfixes-dev libxrender-dev libxss-dev \
+            libwayland-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev libdbus-1-dev
+          python3 -m venv "$RUNNER_TEMP/mirror-python"
+          "$RUNNER_TEMP/mirror-python/bin/pip" install pillow pyyaml meson ninja mako packaging
+          echo "$RUNNER_TEMP/mirror-python/bin" >> "$GITHUB_PATH"
+          echo /usr/lib/llvm-19/bin >> "$GITHUB_PATH"
+
+      - name: Fetch pinned public build inputs
+        run: |
+          python tests/ci_config_test.py
+          python tools/ci-bootstrap.py
+
+      - name: Build private SDK host tools
+        run: |
+          cmake -S _deps/sdk -B _deps/sdk/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=clang++-19 \
+            -DOP_ENABLE_PACKAGING=ON -DOP_BUILD_GUI=OFF -DOP_BUILD_TESTS=OFF -DOP_BUILD_EXAMPLES=OFF
+          cmake --build _deps/sdk/build --target prospero prospero-link prospero-stub -j2
+          echo "$GITHUB_WORKSPACE/_deps/sdk/build/bin" >> "$GITHUB_PATH"
+
+      - name: Build native RADV
+        env:
+          PS5_MESA_SOURCE: ${{ github.workspace }}/_deps/mesa
+          CMAKE_BUILD_PARALLEL_LEVEL: '2'
+        run: sh _deps/sdk/tools/build-ps5-mesa.sh release
+
+      - name: Build shared external companion
+        shell: pwsh
+        env:
+          MIRROR_BROKER_TOKEN: ${{ secrets.MIRROR_BROKER_TOKEN }}
+        run: ./tools/build-shared-broker.ps1 -SdkRoot _deps/sdk
+
+      - name: Build native title and runtime
+        run: |
+          bash tools/build-ps5.sh
+          bash tools/build-ps5-runtime.sh
+
+      - name: Test release exporter
+        run: python tests/ps5_release_test.py
+
+      - name: Package PKG and folder ZIP
+        shell: pwsh
+        run: |
+          ./tools/package-ps5.ps1 -SdkRoot _deps/sdk -Version $env:RELEASE_VERSION `
+            -ProsperoPath _deps/sdk/build/bin/prospero
+
+      - name: Upload reviewed release set only
+        uses: actions/upload-artifact@v7
+        with:
+          name: MirrorPSX-PS5-v${{ inputs.version }}
+          path: dist/ps5-v${{ inputs.version }}/
+          if-no-files-found: error
+          retention-days: 14

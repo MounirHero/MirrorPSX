@@ -4,7 +4,8 @@ set(MESA_SOURCE "${CMAKE_SOURCE_DIR}/../../PS5_Mesa" CACHE PATH "PS5_Mesa Vulkan
 set(RADV "${DEPS}/lib/libvulkan_radeon.a")
 set(IMGUI "${CMAKE_SOURCE_DIR}/third_party/imgui")
 set(PLATFORM "${CMAKE_SOURCE_DIR}/build/ps5-platform-source/platform")
-if(NOT EXISTS "${CMAKE_SOURCE_DIR}/build/broker-config/broker_config.hpp")
+if(NOT EXISTS "${CMAKE_SOURCE_DIR}/build/broker-config/broker_config.hpp" OR
+   NOT EXISTS "${CMAKE_SOURCE_DIR}/build/broker-config/broker.json")
     message(FATAL_ERROR "Run tools/build-shared-broker.ps1 before building the console client")
 endif()
 set(CMAKE_ASM_COMPILER clang-19)
@@ -40,6 +41,15 @@ target_include_directories(MirrorPSX PRIVATE src ${IMGUI} ${IMGUI}/backends thir
 target_compile_definitions(MirrorPSX PRIVATE IMGUI_IMPL_VULKAN_USE_VOLK VK_NO_PROTOTYPES MIRROR_PS5)
 target_link_libraries(MirrorPSX PRIVATE airplay "${DEPS}/lib/libavformat.a" "${DEPS}/lib/libavcodec.a" "${DEPS}/lib/libswscale.a" "${DEPS}/lib/libswresample.a" "${DEPS}/lib/libavutil.a" "${DEPS}/lib/libxml2.a" "${DEPS}/lib/libssl.a" "${DEPS}/lib/libcrypto.a" "-Wl,--whole-archive" "${RADV}" "-Wl,--no-whole-archive" SceAgc SceAgcDriver SceVideoOut ScePad SceUserService SceSystemService SceSysmodule SceNet SceNetCtl SceAudioOut)
 set_target_properties(MirrorPSX PROPERTIES SUFFIX ".elf")
+find_package(Python3 3.11 COMPONENTS Interpreter REQUIRED)
+set_property(TARGET MirrorPSX APPEND PROPERTY LINK_DEPENDS "${CMAKE_SOURCE_DIR}/build/broker-config/broker.json")
+add_custom_command(TARGET MirrorPSX POST_BUILD
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/ps5-release.py" record-build
+        --elf "$<TARGET_FILE:MirrorPSX>"
+        --config "${CMAKE_SOURCE_DIR}/build/broker-config/broker_config.hpp"
+        --broker-manifest "${CMAKE_SOURCE_DIR}/build/broker-config/broker.json"
+        --output "${CMAKE_CURRENT_BINARY_DIR}/release-build.json"
+    VERBATIM)
 target_include_directories(MirrorPSX PRIVATE "${PLATFORM}/include")
 target_include_directories(MirrorPSX PRIVATE "${OP}/../include" "${CMAKE_SOURCE_DIR}/build/broker-config")
 target_link_libraries(MirrorPSX PRIVATE "${OP}/target/lib/libopenprospero_companion.a")

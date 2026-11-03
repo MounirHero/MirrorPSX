@@ -1,59 +1,74 @@
-# Broker esterno condiviso OpenProspero
+# Shared external OpenProspero companion
 
-Un unico payload `OpenProspero-SharedBroker.elf` serve più applicazioni
-compatibili. Non viene inserito nei PKG e non viene avviato da MirrorPSX.
-Riutilizza il daemon e il protocollo pubblico dell'SDK OpenProspero, senza
-modificare Hyperion o le sorgenti del daemon. Il payload resta attivo quando
-un client si chiude; va ricaricato dopo un riavvio della console.
+A single `OpenProspero-SharedBroker.elf` serves multiple compatible applications.
+It is loaded separately from the titles, stays running when a client closes and
+must be loaded again after a console reboot. MirrorPSX does not embed, autostart,
+replace or stop the broker. The daemon and public protocol are reused from the
+OpenProspero SDK without modifying its sources or the Hyperion project.
 
-## Primo test
+## First run
 
-1. Caricare `dist/OpenProspero-SharedBroker.elf` con il loader ELF già in uso
-   sulla PS5. Avviarlo una sola volta. Serve un ambiente payload con le
-   funzionalità kernel richieste dal companion OpenProspero.
-2. Installare `dist/MirrorPSX-PS5-test-r10.pkg` e avviarlo dall'icona.
-3. Verificare nel klog `External broker promoted own PID=...`, poi
-   `Receiver listening: 1`. Provare Duplica schermo dall'iPad.
-4. Se il broker manca o non risponde, avviarlo e premere Riprova nell'app.
-   Un timeout non viene considerato successo.
+1. Load the companion ELF supplied with the release through a compatible PS5
+   ELF loader. The payload environment must provide the kernel functionality
+   required by OpenProspero's privileged companion. Start it once.
+2. Choose one app format from `dist/ps5-vNN.NN/`: install the PKG, or extract the
+   ZIP and copy `PPSA99221/` to `/data/homebrew/PPSA99221/` for ShadowMountPlus.
+3. Launch MirrorPSX. In the log, check `External broker promoted own PID=...`
+   followed by `Receiver listening: 1`. Try Screen Mirroring from the iPad.
+4. If the broker was unavailable, start it and select Retry in MirrorPSX.
+   A timeout is never treated as confirmed success.
 
-La coppia ELF/PKG deve essere costruita con la stessa configurazione. Un
-companion Hyperion già avviato con un altro token non è automaticamente
-compatibile con questo client: non viene terminato o sostituito dall'app.
+Use a matched companion/app release. An existing Hyperion companion with a
+separate configuration is not automatically interchangeable; the app will not
+terminate or replace that process. Do not keep PKG and folder installations of
+MirrorPSX's title ID active together.
 
-## Contratto per altre app
+## Contract for other applications
 
-- Collegare `libopenprospero_companion.a` e usare
-  `openprospero/companion_privileged.h` dell'SDK.
-- Condividere il token di build, senza copiarlo nel sorgente o nei log.
-- Selezionare la PS5 stessa: loopback o il suo IPv4 locale, porte 9069–9072.
-- In un titolo con TCP limitato, usare la richiesta UDP del client SDK.
-- Per l'elevazione chiedere il proprio PID; controllare il risultato e tutte
-  le fasi rootdir, jaildir e credentials prima di proseguire.
-- Caricare gli asset di `/app0` prima dell'elevazione, oppure conservare
-  descrittori validi o usare il mount fisico corretto dopo il cambio di root.
-- Non caricare una nuova istanza a ogni avvio di un'app e non arrestare il
-  servizio condiviso quando un client termina.
+- Link `libopenprospero_companion.a` and use the SDK's
+  `openprospero/companion_privileged.h` public API.
+- Share the build configuration without putting its token in source control
+  or logs. Matching protocol versions alone do not establish compatibility.
+- Connect to the console itself: loopback or its routed local IPv4 address,
+  on ports 9069 through 9072.
+- Use the SDK's UDP request when title TCP is unavailable. Requests and waits
+  must be bounded; validate replies rather than assuming a sent request succeeded.
+- Ask to promote the app's own PID and check the operation result and all
+  rootdir, jaildir and credential results before starting the receiver.
+- Load `/app0` assets before promotion, or preserve valid file descriptors / use
+  the correct physical mount afterwards. Promotion changes the filesystem root.
+- Reuse the running service. Do not create a daemon per title or stop the shared
+  service when a client exits.
 
-MirrorPSX prepara gli asset prima della richiesta e mantiene l'atlante e i font
-in memoria. Le chiavi vengono create dopo l'elevazione in
-`/data/mirrorpsx/pairing.key`; il generatore continua a usare KERN_ARND.
+MirrorPSX keeps its fonts and atlas in memory before promotion. Pairing keys
+are written afterwards to `/data/mirrorpsx/pairing.key`; KERN_ARND provides the
+native random bytes. Apple and DLNA startup both require confirmed preparation.
+Other applications must adopt this contract; they are not modified by this work.
 
-## Build e limiti
+## Build and release
 
-Eseguire `tools/build-shared-broker.ps1`, poi `tools/build-ps5.sh` e
-`tools/package-ps5.ps1`. La configurazione condivisa è conservata in
-`%LOCALAPPDATA%/OpenProspero/shared-broker/token.txt`; il relativo header è
-generato solo in `build/broker-config`. Il rebuild conserva il token.
-Altre app devono adottare questo stesso contratto; non sono state modificate.
+```powershell
+.\tools\build-shared-broker.ps1
+wsl -d Debian bash tools/build-ps5.sh
+.\tools\package-ps5.ps1 -Version 10.00
+```
 
-La build usa l'opzione SDK AllowPrivileged/Lan. Il protocollo storico usa un
-token a 32 bit, non un canale cifrato. Il daemon limita i peer TCP alla console
-stessa e richiede il token per i frame UDP. Non è un servizio da esporre a
-Internet. Non viene abilitata l'opzione di shutdown o lo spawn OPCP opzionale;
-restano le operazioni privilegiate fornite dal daemon SDK.
+The workstation's shared token stays in
+`%LOCALAPPDATA%/OpenProspero/shared-broker/token.txt`. The generated header and
+broker manifest live only in `build/broker-config/`. Rebuilding reuses the token.
+The app's post-link receipt records the executable and broker hashes. Packaging
+rejects a mismatched pair and exports the companion separately beside both app
+formats in `dist/ps5-v10.00/`. See [RELEASING.md](RELEASING.md).
 
-Il log R8 conferma elevazione del processo, chiavi persistenti, annuncio mDNS
-e connessione IPv6 dell�iPad. La R9 corregge il successivo crash della
-sincronizzazione. Il video e la correzione IPv6 richiedono una prova reale. L'app non dichiara il
-ricevitore disponibile in caso di errore.
+The SDK build uses AllowPrivileged/Lan. Its legacy protocol has a 32-bit token
+and is not encrypted. TCP peers are restricted to the console itself; UDP
+requests require the configured token. Do not expose this service to the
+Internet. Optional shutdown and OPCP spawn are not enabled; the SDK daemon's
+privileged operations remain available.
+
+## Hardware evidence
+
+The R8 console log confirms process promotion, persistent keys, DNS-SD
+registration and an incoming IPv6 iPad connection. Later timing and PIN fixes
+have desktop tests; successful PS5 video/audio and folder launch still require
+hardware testing. See [CONSOLE_TESTING.md](CONSOLE_TESTING.md).

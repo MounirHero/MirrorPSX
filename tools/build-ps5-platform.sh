@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 REVISION=95c08f27386fc698f6bbe21dde3030140a41d10b
-SOURCE="$ROOT/../Hyperion/build/ps5-platform-source"
+SOURCE="${MIRROR_PLATFORM_SOURCE:-$ROOT/../Hyperion/build/ps5-platform-source}"
 OUTPUT="$ROOT/build/ps5-platform-source"
 if [ ! -f "$OUTPUT/platform/Makefile" ]; then
   mkdir -p "$OUTPUT"

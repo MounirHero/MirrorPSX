@@ -1,0 +1,22 @@
+{
+  "reference/ffmpeg": {
+    "repository": "https://github.com/FFmpeg/FFmpeg.git",
+    "revision": "894da5ca7d742e4429ffb2af534fcda0103ef593"
+  },
+  "reference/libplist": {
+    "repository": "https://github.com/libimobiledevice/libplist.git",
+    "revision": "72480212cd8ec0ab8d0b5064df52c146cac603b4"
+  },
+  "reference/ps5-homebrew-ui": {
+    "repository": "https://github.com/blackbearreloaded/ps5-homebrew-ui.git",
+    "revision": "4b3fbb73fa309579570d42d0d7fcd60399d8b03b"
+  },
+  "_deps/mesa": {
+    "repository": "https://github.com/blackbearreloaded/PS5_Mesa.git",
+    "revision": "c5aaca966319a18bfe469e727400ca41dd696a7f"
+  },
+  "_deps/platform": {
+    "repository": "https://github.com/mihawk-99/PS5_PayloadSDK.git",
+    "revision": "95c08f27386fc698f6bbe21dde3030140a41d10b"
+  }
+}

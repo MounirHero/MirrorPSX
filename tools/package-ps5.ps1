@@ -1,11 +1,26 @@
-param([string]$SdkRoot = "../sdk", [string]$BuildDirectory = "build/ps5")
+param(
+    [string]$SdkRoot = "../sdk",
+    [string]$BuildDirectory = "build/ps5",
+    [ValidatePattern('^[0-9]{2}\.[0-9]{2}$')][string]$Version = '10.00',
+    [string]$OutputDirectory = 'dist',
+    [string]$ProsperoPath = ''
+)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Push-Location $root
 try {
     $sdk = (Resolve-Path -LiteralPath $SdkRoot).Path
-    $prospero = Join-Path $sdk 'build/bin/Release/prospero.exe'
+    $prospero = if ($ProsperoPath) { (Resolve-Path -LiteralPath $ProsperoPath).Path } else { Join-Path $sdk 'build/bin/Release/prospero.exe' }
+    if (-not (Test-Path -LiteralPath $prospero)) { throw 'OpenProspero packager missing. Build the SDK tools or pass -ProsperoPath.' }
     $elf = (Resolve-Path -LiteralPath "$BuildDirectory/MirrorPSX.elf").Path
+    $receipt = Join-Path $BuildDirectory 'release-build.json'
+    if (-not (Test-Path -LiteralPath $receipt)) { throw 'Native build receipt missing. Rebuild the shared broker and PS5 app before packaging.' }
+    $broker = Join-Path $root 'dist/OpenProspero-SharedBroker.elf'
+    $brokerLicense = Join-Path $root 'dist/OpenProspero-SharedBroker-LICENSE.txt'
+    if (-not (Test-Path -LiteralPath $broker) -or -not (Test-Path -LiteralPath $brokerLicense)) { throw 'Matching external companion artifacts missing. Run tools/build-shared-broker.ps1.' }
+    $releaseRoot = if ([IO.Path]::IsPathRooted($OutputDirectory)) { $OutputDirectory } else { Join-Path $root $OutputDirectory }
+    $releaseDirectory = Join-Path $releaseRoot "ps5-v$Version"
+    if (Test-Path -LiteralPath $releaseDirectory) { throw 'Release directory already exists. Choose a new version or output directory.' }
     $runtime = Join-Path $root 'build/ps5-runtime/libc.prx'
     $expectedRuntimeHash = 'E6FF45D16ADF687855CC3B33B0C8A4132B6504360B221E0A34C7E99FB3BA0036'
     if (-not (Test-Path -LiteralPath $runtime)) {
@@ -15,7 +30,7 @@ try {
     if ((Get-FileHash -LiteralPath $runtime -Algorithm SHA256).Hash -ne $expectedRuntimeHash) {
         throw 'PS5 runtime checksum mismatch'
     }
-    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fffffff'
     $app = Join-Path $root "build/ps5-package-$stamp/app"
     $output = Join-Path $root "build/ps5-package-$stamp/package"
     New-Item -ItemType Directory -Path "$app/sce_sys" -Force | Out-Null
@@ -26,19 +41,21 @@ try {
     }
     Copy-Item -LiteralPath 'assets' -Destination $app -Recurse
     Copy-Item -LiteralPath 'THIRD_PARTY_NOTICES.md' -Destination $app
-    Copy-Item -LiteralPath 'reference/ps5-homebrew-ui/LICENSE' -Destination "$app/LICENSE"
+    Copy-Item -LiteralPath 'LICENSE' -Destination "$app/LICENSE"
     & $prospero self $elf "$app/eboot.bin" --signed-debug
     if ($LASTEXITCODE -ne 0) { throw 'PS5 SELF creation failed' }
     $env:MIRROR_PACKAGE_APP = $app
+    $env:MIRROR_PACKAGE_VERSION = $Version
     @'
 import os, json
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 app=Path(os.environ['MIRROR_PACKAGE_APP'])
+version=os.environ['MIRROR_PACKAGE_VERSION']
 param={
  'titleId':'PPSA99221','conceptId':'99221',
  'contentId':'UP9000-PPSA99221_00-MIRRORPSX0000001',
- 'contentVersion':'10.000.000','masterVersion':'10.00',
+ 'contentVersion':version[:2]+'.000.000','masterVersion':version,
  'applicationCategoryType':0,'applicationDrmType':'free',
  'contentBadgeType':1,'attribute':0,'attribute2':0,'attribute3':0,
  'downloadDataSize':0,'kernel':{'flexibleMemorySize':1073741824},
@@ -57,7 +74,7 @@ draw.text((256,372),'MirrorPSX',font=font,anchor='mm',fill=(230,239,252))
 icon.save(app/'sce_sys/icon0.png')
 '@ | python -
     if ($LASTEXITCODE -ne 0) { throw 'PS5 assets preparation failed' }
-    & $prospero package $app $output --content-id 'UP9000-PPSA99221_00-MIRRORPSX0000001' --title 'MirrorPSX' --version '10.00' --no-companion --experimental
+    & $prospero package $app $output --content-id 'UP9000-PPSA99221_00-MIRRORPSX0000001' --title 'MirrorPSX' --version $Version --no-companion --experimental
     if ($LASTEXITCODE -ne 0) { throw 'PS5 packaging failed' }
     $pkg = @(Get-ChildItem -LiteralPath $output -Filter '*.pkg' -Recurse)
     if ($pkg.Count -ne 1) { throw 'Expected one PS5 package' }
@@ -75,13 +92,15 @@ icon.save(app/'sce_sys/icon0.png')
         (Get-FileHash -LiteralPath "$app/eboot.bin" -Algorithm SHA256).Hash) {
         throw 'Final PKG executable does not match the signed build'
     }
-    New-Item -ItemType Directory -Path 'dist' -Force | Out-Null
-    $destination = Join-Path $root 'dist/MirrorPSX-PS5-test-r10.pkg'
-    Copy-Item -LiteralPath $pkg[0].FullName -Destination $destination -Force
-    Get-FileHash -LiteralPath $destination -Algorithm SHA256 | Format-List
-    Write-Host "PS5 test package: $destination"
+    # Export from the re-extracted PKG: folder users receive identical title bytes.
+    & python tools/ps5-release.py export --app $verified --pkg $pkg[0].FullName `
+        --broker $broker --broker-license $brokerLicense --receipt $receipt --elf $elf `
+        --output $releaseDirectory --version $Version
+    if ($LASTEXITCODE -ne 0) { throw 'PS5 dual-format release export failed' }
+    Write-Host "PS5 PKG, folder ZIP and external companion: $releaseDirectory"
 } finally {
     Remove-Item Env:MIRROR_PACKAGE_APP -ErrorAction SilentlyContinue
+    Remove-Item Env:MIRROR_PACKAGE_VERSION -ErrorAction SilentlyContinue
     Pop-Location
 }
 

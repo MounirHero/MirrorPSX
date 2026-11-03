@@ -7,5 +7,6 @@ bash "$ROOT/tools/build-ps5-deps.sh"
 bash "$ROOT/tools/build-ps5-platform.sh"
 cmake -S "$ROOT" -B "$ROOT/build/ps5" -G Ninja -U CMAKE_CXX_FLAGS \
   -DMIRROR_PS5=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DMESA_SOURCE="${MIRROR_MESA_SOURCE:-$ROOT/../../PS5_Mesa}" \
   -DCMAKE_TOOLCHAIN_FILE="$ROOT/tools/ps5-toolchain.cmake"
 cmake --build "$ROOT/build/ps5" -j6

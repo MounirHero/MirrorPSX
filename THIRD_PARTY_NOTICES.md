@@ -1,4 +1,9 @@
-# UI assets
+# Third-party notices
+
+This document records dependency licenses, asset attribution and local portability changes.
+Original notices in vendored sources and license files remain authoritative.
+
+## UI assets
 
 - `assets/ui/backdrop.png`: original `sce_sys/background-source.png` from
   ps5-homebrew-ui, Copyright (C) 2026 BlackBearReloaded, GPL-3.0-or-later.
@@ -23,7 +28,7 @@ Rebuild them with `python tools/pack-ui-assets.py` (Pillow and CairoSVG required
 The packed backdrop is resized and blurred for an unobtrusive waiting screen.
 Controller prompts are third-party assets, not a claim of Sony endorsement.
 
-# Desktop media runtime
+## Desktop media runtime
 
 UxPlay's internal `lib/mdnsd` retains its LGPL-2.1-or-later notices. Local
 Windows discovery portability fixes give its selected LAN address a distinct
@@ -40,10 +45,11 @@ selects an active gateway interface instead of Hyper-V/WSL adapters.
 - libxml2: MIT license, https://gitlab.gnome.org/GNOME/libxml2/-/blob/master/Copyright.
 
 These libraries are supplied by the local MinGW environment. No third-party
-sources were patched for the desktop media feature. DLNA/UPnP support here is an
+sources were patched for the desktop DLNA media feature; the UxPlay
+interoperability changes below are documented separately. DLNA/UPnP support here is an
 implementation of UPnP AV interfaces, not a certification claim.
 
-# PS5 build
+## PS5 build
 
 The console build consumes OpenProspero, static RADV/Mesa, OpenSSL 3.5.2,
 libxml2 2.14.5 and the pinned FFmpeg reference sources. Upstream source trees and
@@ -88,8 +94,8 @@ No system SPRX binary is copied into the package.
 The six-argument syscall trampoline follows OpenProspero target/crt/start.S
 (GPL-3.0-or-later), using the identity gate validated against the current PID.
 The read-only entropy query uses SYS___sysctl=202 and CTL_KERN/KERN_ARND=1/37
-from the SDK/FreeBSD headers. KERN_ARND is OpenSSL's BSD entropy route; its
-the R6 hardware log confirms a successful query in the native PS5 title.
+from the SDK/FreeBSD headers. KERN_ARND is OpenSSL's BSD entropy route. The R6 hardware log confirms a
+successful query in the native PS5 title.
 PacBrew's OpenSSL recipe also uses OpenSSL 3.5.2 with BSD-x86_64:
 https://github.com/ps5-payload-dev/pacbrew-repo/blob/main/openssl/PKGBUILD.
 
@@ -102,11 +108,11 @@ are logged for hardware diagnosis; multicast permission is not bypassed.
 
 The shared external broker is built without source modifications from
 OpenProspero sdk/companion/daemon.c, privileged_ps5.c, the protocol/transport
-files and injector sources, using tools/build-companion.ps1. The application
+files and injector sources, using the SDK companion build scripts. The application
 links the SDK companion client archive and public headers. These retain their
 GPL-3.0-or-later notices and embedded upstream attributions, including the
 Hyperion and psxterm adaptations. SDK source is available in ../sdk and its
-LICENSE accompanies the separate ELF. No broker payload is embedded in the PKG.
+LICENSE accompanies the separate ELF. No broker payload is embedded in the PKG or the folder ZIP.
 
 R9 documents a UxPlay native portability fix: netutils_parse_address delegates
 numeric peers to src/platform/numeric_address.c only on PS5, because the
