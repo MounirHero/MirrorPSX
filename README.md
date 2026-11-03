@@ -144,7 +144,10 @@ Apple mirroring audio output is not implemented. Subtitles, playlists and next-t
 - **PIN rejected or connection closes:** report the app version, sender OS and the corresponding receiver log. Do not share the PIN, pairing keys or broker configuration.
 - **ZIP does not appear on the home screen:** check `/data/homebrew/PPSA99221/`, the complete folder structure and ShadowMountPlus's logs. Ensure another installation of the same title is not active.
 
-For bug reports, include the release, console firmware, installation format, sender model/OS, steps to reproduce and relevant `[MirrorPSX]`, `[AirPlay]` or `[mDNS]` log lines.
+Use the [issue forms](https://github.com/seregonwar/MirrorPSX/issues/new/choose)
+to report a bug, request a feature or share a real-device compatibility test.
+Include the release, console firmware, installation format, sender model/OS,
+steps to reproduce and relevant `[MirrorPSX]`, `[AirPlay]` or `[mDNS]` log lines.
 
 ## Development
 

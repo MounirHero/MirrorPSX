@@ -3,6 +3,8 @@ import os
 import subprocess
 import sys
 import unittest
+from unittest.mock import MagicMock, patch
+from urllib.error import HTTPError
 from pathlib import Path
 
 import yaml
@@ -40,14 +42,41 @@ class CIConfigTests(unittest.TestCase):
         self.assertEqual(verify["permissions"], {"contents": "read"})
         self.assertNotIn("secrets.", (ROOT / ".github/workflows/verify.yml").read_text(encoding="utf-8"))
 
-    def test_publication_is_draft_only_and_opt_in(self):
-        self.assertEqual(WORKFLOW["on"]["workflow_dispatch"]["inputs"]["draft_release"]["default"], "false")
-        draft = WORKFLOW["jobs"]["draft"]
-        self.assertEqual(draft["if"], "inputs.draft_release")
-        self.assertEqual(draft["needs"], "build")
-        command = draft["steps"][-1]["run"]
-        self.assertIn("--draft --prerelease", command)
-        self.assertIn("sha256sum -c", command)
+    def test_publication_is_manual_and_opt_in(self):
+        choice = WORKFLOW["on"]["workflow_dispatch"]["inputs"]["release_type"]
+        self.assertEqual(choice["default"], "artifacts")
+        self.assertEqual(choice["options"], ["artifacts", "draft", "prerelease", "stable"])
+        publish = WORKFLOW["jobs"]["publish"]
+        self.assertEqual(publish["if"], "inputs.release_type != 'artifacts'")
+        self.assertEqual(publish["needs"], "build")
+        self.assertEqual(publish["environment"], "main")
+        command = publish["steps"][-1]["run"]
+        self.assertIn("sha256sum --strict -c", command)
+        self.assertNotIn("${{ inputs.", command)
+
+    def publication_preflight(self, response):
+        command = WORKFLOW["jobs"]["publish"]["steps"][-1]["run"]
+        source = command.split("<<'PY'\n", 1)[1].split("\nPY", 1)[0]
+        environment = dict(GITHUB_API_URL="https://api.github.com", GH_REPO="owner/repo",
+                           GH_TOKEN="synthetic-publish-token", RELEASE_VERSION="10.00")
+        with patch.dict(os.environ, environment), patch("urllib.request.urlopen", side_effect=response):
+            exec(compile(source, "publish-preflight", "exec"), {})
+
+    def test_publication_rejects_existing_tags_and_api_failures(self):
+        def missing(request, **kwargs):
+            raise HTTPError(request.full_url, 404, "Not Found", {}, None)
+
+        self.publication_preflight(missing)
+        with self.assertRaises(SystemExit):
+            self.publication_preflight(lambda *args, **kwargs: MagicMock())
+
+        def unauthorized(request, **kwargs):
+            raise HTTPError(request.full_url, 401, "Unauthorized", {}, None)
+
+        with self.assertRaises(HTTPError):
+            self.publication_preflight(unauthorized)
+        with self.assertRaises(TimeoutError):
+            self.publication_preflight(TimeoutError("network timeout"))
 
     def preflight(self, **overrides):
         step = next(s for s in JOB["steps"] if s.get("name") == "Check release configuration")

@@ -1,0 +1,52 @@
+name: Compatibility test report
+description: Share results from a real device, including successful tests.
+title: "[Compatibility] "
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for results observed on real hardware. Use Bug report for a specific reproducible failure.
+        Report each installation format separately and do not include PINs, pairing keys or broker tokens.
+  - type: input
+    id: version
+    attributes:
+      label: MirrorPSX version or commit
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Receiver installation tested
+      options:
+        - PS5 - PKG
+        - PS5 - folder ZIP / ShadowMountPlus
+        - Windows preview
+    validations:
+      required: true
+  - type: textarea
+    id: receiver
+    attributes:
+      label: Receiver setup
+      description: PS5 firmware or Windows version, launcher, external companion release, and wired/Wi-Fi connection.
+    validations:
+      required: true
+  - type: textarea
+    id: sender
+    attributes:
+      label: Sender device and app
+      description: Device model, OS version, sending app/version, and Apple screen mirroring or DLNA mode. For DLNA use unprotected test content.
+    validations:
+      required: true
+  - type: textarea
+    id: results
+    attributes:
+      label: Observed results
+      description: Describe discovery, PIN acceptance, video, audio if tested, disconnect/reconnect, test duration and any visible delay. Mark anything you did not test explicitly.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and limitations
+      description: Add sanitized logs, screenshots, reproduction steps or limitations. Distinguish successful launch from successful streaming.

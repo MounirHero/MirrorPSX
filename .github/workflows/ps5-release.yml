@@ -1,4 +1,4 @@
-name: PS5 release artifacts
+name: PS5 release
 
 on:
   workflow_dispatch:
@@ -7,10 +7,19 @@ on:
         description: Native package version (NN.NN)
         required: true
         default: '10.00'
-      draft_release:
-        description: Create a draft prerelease after a successful build
-        type: boolean
-        default: false
+      release_type:
+        description: What to create after verification and packaging
+        type: choice
+        default: artifacts
+        options:
+          - artifacts
+          - draft
+          - prerelease
+          - stable
+      release_notes:
+        description: Additional release notes (changes and hardware actually tested)
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -146,15 +155,19 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  draft:
-    name: Prepare draft prerelease
-    if: inputs.draft_release
+  publish:
+    name: Create manual GitHub release
+    if: inputs.release_type != 'artifacts'
     needs: build
     runs-on: ubuntu-24.04
+    environment: main
+    timeout-minutes: 10
     permissions:
       contents: write
     env:
       RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_TYPE: ${{ inputs.release_type }}
+      RELEASE_NOTES: ${{ inputs.release_notes }}
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
@@ -163,21 +176,48 @@ jobs:
         with:
           name: MirrorPSX-PS5-v${{ inputs.version }}
           path: release-assets
-      - name: Verify checksums and prepare draft
+      - name: Verify checksums and create selected release
         run: |
           cd release-assets
-          sha256sum -c SHA256SUMS.txt
+          sha256sum --strict -c SHA256SUMS.txt
           tag="v$RELEASE_VERSION"
-          # Never overwrite a previously published release or replace its assets.
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Release already exists; review it instead of overwriting it."
-            exit 1
-          fi
+          # Refuse existing releases/tags, including tags pointing at a different commit.
+          # Authentication/network errors must fail rather than look like a missing tag.
+          python3 - <<'PY'
+          import os
+          from urllib.error import HTTPError
+          from urllib.request import Request, urlopen
+          base = os.environ['GITHUB_API_URL'] + '/repos/' + os.environ['GH_REPO']
+          tag = 'v' + os.environ['RELEASE_VERSION']
+          for path in ('/releases/tags/' + tag, '/git/ref/tags/' + tag):
+              request = Request(base + path, headers={
+                  'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                  'Accept': 'application/vnd.github+json',
+                  'X-GitHub-Api-Version': '2022-11-28',
+              })
+              try:
+                  with urlopen(request, timeout=30):
+                      raise SystemExit('Release or tag already exists; choose a new version')
+              except HTTPError as error:
+                  if error.code != 404:
+                      raise
+          PY
           printf '%s\n' \
             'Experimental PS5 build. Choose PKG or folder ZIP; use the matching external shared companion.' \
             'See INSTALL.txt and the repository README. Hardware verification remains separate from CI checks.' \
             "Built from $GITHUB_SHA by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             > "$RUNNER_TEMP/release-notes.md"
-          gh release create "$tag" ./* --draft --prerelease --latest=false \
+          if [ -n "$RELEASE_NOTES" ]; then
+            printf '\n%s\n' "$RELEASE_NOTES" >> "$RUNNER_TEMP/release-notes.md"
+          fi
+          case "$RELEASE_TYPE" in
+            draft) flags=(--draft --prerelease --latest=false) ;;
+            prerelease) flags=(--prerelease --latest=false) ;;
+            stable) flags=(--latest=true) ;;
+            *) echo 'Invalid release type'; exit 1 ;;
+          esac
+          gh release create "$tag" ./* "${flags[@]}" \
             --target "$GITHUB_SHA" --title "MirrorPSX $RELEASE_VERSION" \
             --notes-file "$RUNNER_TEMP/release-notes.md"
+          printf 'Created %s: [%s](%s/%s/releases/tag/%s)\n' \
+            "$RELEASE_TYPE" "$tag" "$GITHUB_SERVER_URL" "$GH_REPO" "$tag" >> "$GITHUB_STEP_SUMMARY"

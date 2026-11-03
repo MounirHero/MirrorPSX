@@ -1,6 +1,6 @@
 # Continuous integration and the private SDK
 
-The `PS5 release artifacts` workflow imports the **private OpenProspero SDK
+The `PS5 release` workflow imports the **private OpenProspero SDK
 during the build**. It never expects the SDK to be committed to MirrorPSX or
 available in a developer's sibling directory on the runner.
 
@@ -66,14 +66,17 @@ manual `workflow_dispatch`, and does not expose secrets to pull-request jobs.
 
 The workflow does not upload an SDK cache, install anything on a PS5 or modify
 the private SDK repository. By default it only uploads the checked release set.
-An explicit **draft_release** input can create a draft prerelease after all jobs
-pass and downloaded checksums verify. It refuses an existing release and never
-publishes automatically. See [RELEASING.md](RELEASING.md).
+The manual **release_type** choice can instead create a draft, publish a
+prerelease, or publish a stable release after all jobs pass and downloaded
+checksums verify. It refuses existing releases/tags and defaults to artifacts
+only. Publishing uses the `main` environment and a separate job with repository
+write access. See [RELEASING.md](RELEASING.md).
 
 ## Running it
 
-Open **Actions → PS5 release artifacts → Run workflow**, choose the default
-branch and enter a native package version such as `10.00`. The result contains
+Open **Actions → PS5 release → Run workflow**, choose the default branch, enter
+a native package version such as `10.00` and select the intended release type.
+The result contains
 the PKG, folder ZIP, matching external companion, license, installation guide,
 manifest and checksums.
 

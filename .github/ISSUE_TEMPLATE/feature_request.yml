@@ -1,0 +1,40 @@
+name: Feature request
+description: Suggest an improvement to MirrorPSX.
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [project status](https://github.com/seregonwar/MirrorPSX#project-status) and existing requests first.
+        Native Google Cast, Miracast and protected-content playback are not currently supported.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the task you are trying to complete and who would benefit.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Explain what the app should do. Mockups or examples are welcome.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Relevant platform
+      options:
+        - PS5
+        - Windows preview
+        - Both receivers
+        - Build / documentation / releases
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and context
+      description: Describe workarounds you have tried, affected sender devices/apps, or related requests.

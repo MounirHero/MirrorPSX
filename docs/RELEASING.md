@@ -9,10 +9,10 @@ own broker, identity and runtime requirements.
 ## Prepare and build
 
 For a hosted build, configure [the private SDK CI environment](CI.md) and run
-**PS5 release artifacts** from GitHub Actions. It produces the same release set
+**PS5 release** from GitHub Actions. It produces the same release set
 as the local commands below. Routine Verify jobs must pass first.
-The optional `draft_release` input creates a draft prerelease after checksum
-validation; it defaults to false and will not overwrite an existing release.
+The `release_type` input controls publication after checksum validation. It
+defaults to `artifacts`, which only uploads the build outputs.
 
 Follow [BUILDING.md](BUILDING.md). Build the broker before the native title:
 
@@ -101,6 +101,31 @@ identity. Structural validation does not prove installation/launch compatibility
 Test both installation formats on a console before describing either as verified.
 
 ## Publish
+
+### Manual GitHub Actions release
+
+Open **Actions > PS5 release > Run workflow** on `main`, enter a package version
+in `NN.NN` format and select `release_type`:
+
+| Choice | Result after all checks pass |
+| --- | --- |
+| `artifacts` | Downloadable workflow artifacts only (default). |
+| `draft` | An unpublished draft prerelease for review. |
+| `prerelease` | A published prerelease, without replacing Latest. |
+| `stable` | A published release marked Latest. |
+
+Use `release_notes` for changes, hardware actually tested and known limitations.
+The workflow builds the PKG, folder ZIP and matching external shared companion,
+verifies checksums again after downloading the artifacts, and creates tag
+`vNN.NN` at the exact workflow commit. Existing releases or tags are rejected;
+choose a new version rather than replacing released binaries. API failures
+also stop publication. A stable label does not establish hardware compatibility.
+
+The release job uses the existing `main` environment and the repository's
+automatic `GITHUB_TOKEN`; no additional personal publishing token is needed.
+Only that job receives write access. No push or tag event publishes a release.
+
+### Local publication
 
 Upload the **contents of the versioned release directory** together, not the
 entire `dist/` folder or a source-code ZIP. Keep the companion with the same

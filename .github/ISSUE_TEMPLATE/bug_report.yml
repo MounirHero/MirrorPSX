@@ -1,0 +1,74 @@
+name: Bug report
+description: Report a reproducible problem with MirrorPSX.
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [troubleshooting guide](https://github.com/seregonwar/MirrorPSX#troubleshooting) and existing issues first.
+        Remove pairing keys, PINs, broker tokens and other secrets from logs or screenshots.
+  - type: input
+    id: version
+    attributes:
+      label: MirrorPSX version or commit
+      placeholder: Release tag, build revision, or full commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: receiver
+    attributes:
+      label: Receiver and installation
+      options:
+        - PS5 - PKG
+        - PS5 - folder ZIP / ShadowMountPlus
+        - Windows preview
+        - Other / source build
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Device and environment
+      description: Receiver OS or PS5 firmware, launcher, external companion version, sender device/OS and sending app. For discovery problems, describe Wi-Fi/Ethernet and whether both devices share the same network.
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Affected feature
+      options:
+        - Apple screen mirroring / discovery
+        - PIN / pairing
+        - DLNA video
+        - Startup / external companion
+        - Interface / controller
+        - Build / packaging / CI
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: Describe the actions that trigger the problem, starting with how you launch the receiver.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual behavior
+      description: Include exact error messages and whether the issue happens every time.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Include MirrorPSX lines around the failure. For CI failures, provide the workflow run URL. Remove secrets before posting.
+      render: text
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or recordings
+      description: Attach images here if they help explain the problem. Hide PINs and private information.
