@@ -1,6 +1,6 @@
 # Continuous integration and the private SDK
 
-The `PS5 release` workflow imports the **private OpenProspero SDK
+The `Release` workflow imports the **private OpenProspero SDK
 during the build**. It never expects the SDK to be committed to MirrorPSX or
 available in a developer's sibling directory on the runner.
 
@@ -46,14 +46,16 @@ persistent Git credentials. See the upstream
 Grant the read token only the required repository access. Never paste it or
 the broker value into the workflow, documentation, issues or build output.
 
-Configure the environment's permitted branches to match the intended release
-branch. The workflow also checks that dispatch came from the repository's
-default branch. It has read-only repository permissions, runs only through
-manual `workflow_dispatch`, and does not expose secrets to pull-request jobs.
+Configure the environment's permitted branches/tags to allow the intended
+release refs. Preflight requires manual dispatch on the default branch and
+checks that tag commits belong to its history before any private SDK job runs.
+Workflow permissions default to read-only; only publication can write releases.
+Pull-request jobs do not receive the private SDK credentials.
 
 ## Build flow
 
-1. Require the complete Verify workflow, then validate the release configuration.
+1. Resolve the official/nightly identity, skip redundant scheduled snapshots,
+   then require the complete Verify workflow and validate release configuration.
 2. Import OpenProspero privately into `_deps/sdk`: use the optional pinned
    `OPENPROSPERO_REF`, or automatically resolve the latest default-branch commit.
    Record the actual SHA in the workflow summary and build environment.
@@ -69,21 +71,28 @@ manual `workflow_dispatch`, and does not expose secrets to pull-request jobs.
 7. Upload only `dist/ps5-vNN.NN/` as the workflow artifact. No SDK checkout,
    build tree, credential header, token file or private build receipt is uploaded.
 
-The workflow does not upload an SDK cache, install anything on a PS5 or modify
-the private SDK repository. By default it only uploads the checked release set.
-The manual **release_type** choice can instead create a draft, publish a
-prerelease, or publish a stable release after all jobs pass and downloaded
-checksums verify. It refuses existing releases/tags and defaults to artifacts
-only. Publishing uses the `main` environment and a separate job with repository
-write access. See [RELEASING.md](RELEASING.md).
+After successful builds, the workflow downloads the verified PS5 artifacts and
+Windows preview, creates the preview ZIP, verifies checksums and publishes the
+GitHub Release with generated notes. It uses the `main` environment without
+creating deployments. No SDK cache, private source tree or configuration is
+uploaded. Existing release assets are never overwritten; an existing tag must
+resolve to the exact build commit. See [RELEASING.md](RELEASING.md).
 
 ## Running it
 
-Open **Actions → PS5 release → Run workflow**, choose the default branch, enter
-a native package version such as `10.00` and select the intended release type.
-The result contains
-the PKG, folder ZIP, matching external companion, license, installation guide,
-manifest and checksums.
+Open **Actions > Release > Run workflow** on the default branch. The controls
+match MemDBG: optional `version`, and `nightly`, `draft`, `prerelease` checkboxes.
+Without a version, official releases use the checked-in `VERSION`; a `v*` tag
+push uses the tag version. `PS5_VERSION` supplies the SDK's native package version
+without adding another field to the release form.
+
+Historical nightlies run at 22:00 Europe/Rome, including daylight saving time.
+Two UTC schedules are filtered by preflight; unchanged commits are skipped.
+Each snapshot uses its own `nightly-YYYYMMDD-g<commit>` tag and keeps its assets.
+Like MemDBG, a new nightly is marked Latest; a later stable release can take
+that badge. For a manual nightly, check only `nightly`. Draft/prerelease controls
+apply to official releases. The output contains the PS5 PKG, folder ZIP, matching
+external companion, Windows preview ZIP, licenses, instructions and checksums.
 
 With no `OPENPROSPERO_REF`, each run fetches the latest SDK automatically.
 To reproduce a previous run, set the optional variable to its recorded SHA.

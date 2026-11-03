@@ -9,10 +9,10 @@ own broker, identity and runtime requirements.
 ## Prepare and build
 
 For a hosted build, configure [the private SDK CI environment](CI.md) and run
-**PS5 release** from GitHub Actions. It produces the same release set
+**Release** from GitHub Actions. It produces the same PS5 release set
 as the local commands below. Routine Verify jobs must pass first.
-The `release_type` input controls publication after checksum validation. It
-defaults to `artifacts`, which only uploads the build outputs.
+It publishes to GitHub Releases after checksum validation and includes the
+tested Windows preview ZIP alongside the PS5 artifacts.
 
 Follow [BUILDING.md](BUILDING.md). Build the broker before the native title:
 
@@ -104,26 +104,40 @@ Test both installation formats on a console before describing either as verified
 
 ### Manual GitHub Actions release
 
-Open **Actions > PS5 release > Run workflow** on `main`, enter a package version
-in `NN.NN` format and select `release_type`:
+Open **Actions > Release > Run workflow** on `main`. The form follows MemDBG:
 
-| Choice | Result after all checks pass |
+| Input | Result after all checks pass |
 | --- | --- |
-| `artifacts` | Downloadable workflow artifacts only (default). |
-| `draft` | An unpublished draft prerelease for review. |
-| `prerelease` | A published prerelease, without replacing Latest. |
-| `stable` | A published release marked Latest. |
+| `version` | Optional `0.1.0` or `v0.1.0`; blank uses the checked-in `VERSION`. |
+| `nightly` | Publish a historical snapshot with a date/commit tag; leave draft/prerelease unchecked. |
+| `draft` | Create an unpublished draft for review. |
+| `prerelease` | Mark an official release as prerelease, without replacing Latest. |
 
-Use `release_notes` for changes, hardware actually tested and known limitations.
-The workflow builds the PKG, folder ZIP and matching external shared companion,
-verifies checksums again after downloading the artifacts, and creates tag
-`vNN.NN` at the exact workflow commit. Existing releases or tags are rejected;
-choose a new version rather than replacing released binaries. API failures
-also stop publication. A stable label does not establish hardware compatibility.
+With all boxes unchecked, a normal version publishes a stable release marked
+Latest. A version such as `0.2.0-rc.1` is automatically a prerelease. Generated
+GitHub release notes accompany installation and hardware-validation limits.
+Review notes in a draft when you need to document manual console results.
+
+The native SDK version comes from `PS5_VERSION` (`NN.NN`), separately from the
+public release version in `VERSION`. Bump the native version as needed for PS5
+installer upgrade behavior; do not derive it by truncating a semantic version.
+PS5 filenames and `release.json` retain this native identity. Each public release
+also contains `MirrorPSX-Windows-preview.zip`, covered by `SHA256SUMS.txt`.
+
+Pushing an official `v*` version tag also starts Release. Its commit must belong
+to the default branch history. The workflow creates a missing tag at the exact
+build commit; an existing tag must resolve to that commit. Existing releases
+are rejected rather than overwritten, and API errors stop publication.
+
+Nightlies run daily at 22:00 Europe/Rome and skip unchanged commits. Snapshot
+tags are `nightly-YYYYMMDD-g<commit>`; each is retained independently. Like
+MemDBG, a new nightly takes Latest until a subsequent nightly or stable release.
+A stable label does not establish hardware compatibility.
 
 The release job uses the existing `main` environment and the repository's
 automatic `GITHUB_TOKEN`; no additional personal publishing token is needed.
-Only that job receives write access. No push or tag event publishes a release.
+Only that job receives write access. Commits pushed to `main` run Verify;
+official tags, manual release runs and the nightly schedule run Release.
 Both jobs use `deployment: false`: the `main` environment supplies configuration
 without registering a deployment. Outputs go to Actions artifacts and GitHub
 Releases, not to a running device or hosting service.
@@ -138,8 +152,8 @@ receipts, `broker_config.hpp`, `token.txt`, pairing keys or local logs.
 For example, after reviewing the artifacts and choosing the intended Git tag:
 
 ```powershell
-gh release create v10.00 .\dist\ps5-v10.00\* --draft --prerelease `
-    --title "MirrorPSX 10.00" --notes-file .\docs\release-notes.md
+gh release create v0.1.0 .\dist\ps5-v10.00\* --draft --prerelease `
+    --title "MirrorPSX v0.1.0" --notes-file .\docs\release-notes.md
 ```
 
 Write the release notes first: changes, PKG/folder instructions, companion

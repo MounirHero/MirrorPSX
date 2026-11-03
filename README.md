@@ -51,6 +51,11 @@ Get the files from [GitHub Releases](https://github.com/seregonwar/MirrorPSX/rel
 
 Use the app and companion from the same release. The ZIP contains the application, its assets and runtime; it is **not** a standalone payload ELF. No automatic installer or updater is included.
 
+The Release workflow follows MemDBG's official/nightly flow, with optional
+version and nightly/draft/prerelease controls. PS5 files retain the native package
+version from `PS5_VERSION`; public release tags use `VERSION` or the selected
+version. Releases also include `MirrorPSX-Windows-preview.zip`.
+
 ## Requirements
 
 **PS5**

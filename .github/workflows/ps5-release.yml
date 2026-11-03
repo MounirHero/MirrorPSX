@@ -1,25 +1,30 @@
-name: PS5 release
+name: Release
 
 on:
+  push:
+    tags: ['v*']
+  schedule:
+    # Select the 22:00 Europe/Rome slot in preflight, accounting for DST.
+    - cron: '0 20 * * *'
+    - cron: '0 21 * * *'
   workflow_dispatch:
     inputs:
       version:
-        description: Native package version (NN.NN)
-        required: true
-        default: '10.00'
-      release_type:
-        description: What to create after verification and packaging
-        type: choice
-        default: artifacts
-        options:
-          - artifacts
-          - draft
-          - prerelease
-          - stable
-      release_notes:
-        description: Additional release notes (changes and hardware actually tested)
+        description: Release version, for example 0.1.0 or v0.1.0 (blank uses VERSION)
         type: string
         required: false
+      nightly:
+        description: Build an immutable historical nightly release
+        type: boolean
+        default: false
+      draft:
+        description: Create the GitHub release as draft
+        type: boolean
+        default: false
+      prerelease:
+        description: Mark the GitHub release as prerelease
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -29,14 +34,52 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  preflight:
+    name: Resolve release identity
+    if: github.event_name != 'workflow_dispatch' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    outputs:
+      should_run: ${{ steps.identity.outputs.should_run }}
+      nightly: ${{ steps.identity.outputs.nightly }}
+      version: ${{ steps.identity.outputs.version }}
+      native_version: ${{ steps.identity.outputs.native_version }}
+      tag: ${{ steps.identity.outputs.tag }}
+      title: ${{ steps.identity.outputs.title }}
+      stable: ${{ steps.identity.outputs.stable }}
+      prerelease: ${{ steps.identity.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve release identity and Rome schedule
+        id: identity
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_NIGHTLY: ${{ inputs.nightly }}
+          INPUT_DRAFT: ${{ inputs.draft }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+          SCHEDULE: ${{ github.event.schedule }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" "refs/remotes/origin/$DEFAULT_BRANCH"
+          args=(--event "$GITHUB_EVENT_NAME" --ref-name "$GITHUB_REF_NAME"
+                --version "$INPUT_VERSION" --sha "$GITHUB_SHA"
+                --now "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" --schedule "$SCHEDULE")
+          if [ "$INPUT_NIGHTLY" = true ]; then args+=(--nightly); fi
+          if [ "$INPUT_DRAFT" = true ]; then args+=(--draft); fi
+          if [ "$INPUT_PRERELEASE" = true ]; then args+=(--prerelease); fi
+          python3 tools/resolve-release.py "${args[@]}" | tee -a "$GITHUB_OUTPUT"
+
   verify:
     name: Verify before native release
+    needs: preflight
+    if: needs.preflight.outputs.should_run == 'true'
     uses: ./.github/workflows/verify.yml
 
   build:
-    # Never expose SDK credentials to PRs, forks, or arbitrary dispatch branches.
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    needs: verify
+    # Preflight requires a trusted default-branch commit, including tag releases.
+    needs: [preflight, verify]
     runs-on: ubuntu-24.04
     environment:
       name: main
@@ -52,7 +95,7 @@ jobs:
       MIRROR_MESA_SOURCE: ${{ github.workspace }}/_deps/mesa
       MIRROR_RADV_ARCHIVE: ${{ github.workspace }}/_deps/sdk/build/ps5-mesa/release/lib/libvulkan_radeon.a
       LLVM_CONFIG: llvm-config-19
-      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_VERSION: ${{ needs.preflight.outputs.native_version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -105,7 +148,7 @@ jobs:
             libxi-dev libxinerama-dev libxfixes-dev libxrender-dev libxss-dev \
             libwayland-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev libdbus-1-dev
           python3 -m venv "$RUNNER_TEMP/mirror-python"
-          "$RUNNER_TEMP/mirror-python/bin/pip" install pillow pyyaml meson ninja mako packaging
+          "$RUNNER_TEMP/mirror-python/bin/pip" install pillow pyyaml tzdata meson ninja mako packaging
           echo "$RUNNER_TEMP/mirror-python/bin" >> "$GITHUB_PATH"
           echo /usr/lib/llvm-19/bin >> "$GITHUB_PATH"
           "$OPENPROSPERO_LLD" --version
@@ -153,15 +196,14 @@ jobs:
       - name: Upload reviewed release set only
         uses: actions/upload-artifact@v7
         with:
-          name: MirrorPSX-PS5-v${{ inputs.version }}
-          path: dist/ps5-v${{ inputs.version }}/
+          name: MirrorPSX-PS5-${{ needs.preflight.outputs.tag }}
+          path: dist/ps5-v${{ needs.preflight.outputs.native_version }}/
           if-no-files-found: error
           retention-days: 14
 
   publish:
-    name: Create manual GitHub release
-    if: inputs.release_type != 'artifacts'
-    needs: build
+    name: Publish GitHub Release
+    needs: [preflight, build]
     runs-on: ubuntu-24.04
     environment:
       name: main
@@ -170,59 +212,89 @@ jobs:
     permissions:
       contents: write
     env:
-      RELEASE_VERSION: ${{ inputs.version }}
-      RELEASE_TYPE: ${{ inputs.release_type }}
-      RELEASE_NOTES: ${{ inputs.release_notes }}
+      RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+      RELEASE_TITLE: ${{ needs.preflight.outputs.title }}
+      RELEASE_PRERELEASE: ${{ needs.preflight.outputs.prerelease }}
+      INPUT_DRAFT: ${{ inputs.draft }}
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
       - name: Download verified release set
         uses: actions/download-artifact@v8
         with:
-          name: MirrorPSX-PS5-v${{ inputs.version }}
+          name: MirrorPSX-PS5-${{ needs.preflight.outputs.tag }}
           path: release-assets
+      - name: Download tested Windows preview
+        uses: actions/download-artifact@v8
+        with:
+          name: MirrorPSX-Windows-preview-${{ github.sha }}
+          path: windows-preview
+      - name: Package Windows preview
+        run: |
+          python3 - <<'PY'
+          import shutil
+          shutil.make_archive('release-assets/MirrorPSX-Windows-preview', 'zip', 'windows-preview')
+          PY
+          cd release-assets
+          sha256sum MirrorPSX-Windows-preview.zip >> SHA256SUMS.txt
       - name: Verify checksums and create selected release
         run: |
           cd release-assets
           sha256sum --strict -c SHA256SUMS.txt
-          tag="v$RELEASE_VERSION"
-          # Refuse existing releases/tags, including tags pointing at a different commit.
+          tag="$RELEASE_TAG"
+          # Refuse existing releases and tags pointing at a different commit.
           # Authentication/network errors must fail rather than look like a missing tag.
           python3 - <<'PY'
           import os
           from urllib.error import HTTPError
           from urllib.request import Request, urlopen
           base = os.environ['GITHUB_API_URL'] + '/repos/' + os.environ['GH_REPO']
-          tag = 'v' + os.environ['RELEASE_VERSION']
-          for path in ('/releases/tags/' + tag, '/git/ref/tags/' + tag):
+          tag = os.environ['RELEASE_TAG']
+          def get(path):
               request = Request(base + path, headers={
                   'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
                   'Accept': 'application/vnd.github+json',
                   'X-GitHub-Api-Version': '2022-11-28',
               })
               try:
-                  with urlopen(request, timeout=30):
-                      raise SystemExit('Release or tag already exists; choose a new version')
+                  import json
+                  with urlopen(request, timeout=30) as response:
+                      return json.load(response)
               except HTTPError as error:
                   if error.code != 404:
                       raise
+                  return None
+          if get('/releases/tags/' + tag) is not None:
+              raise SystemExit('Release already exists; published snapshots are immutable')
+          ref = get('/git/ref/tags/' + tag)
+          if ref is not None:
+              obj = ref['object']
+              for _ in range(5):
+                  if obj['type'] != 'tag':
+                      break
+                  obj = get('/git/tags/' + obj['sha'])['object']
+              if obj['type'] != 'commit' or obj['sha'] != os.environ['GITHUB_SHA']:
+                  raise SystemExit('Tag points at a different commit')
           PY
           printf '%s\n' \
             'Experimental PS5 build. Choose PKG or folder ZIP; use the matching external shared companion.' \
+            'The Windows receiver is provided as a separate preview ZIP.' \
             'See INSTALL.txt and the repository README. Hardware verification remains separate from CI checks.' \
             "Built from $GITHUB_SHA by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             > "$RUNNER_TEMP/release-notes.md"
-          if [ -n "$RELEASE_NOTES" ]; then
-            printf '\n%s\n' "$RELEASE_NOTES" >> "$RUNNER_TEMP/release-notes.md"
+          flags=(--generate-notes)
+          if [ "$INPUT_DRAFT" = true ]; then
+            flags+=(--draft --latest=false)
+          elif [ "$RELEASE_PRERELEASE" = true ]; then
+            flags+=(--latest=false)
+          else
+            flags+=(--latest=true)
           fi
-          case "$RELEASE_TYPE" in
-            draft) flags=(--draft --prerelease --latest=false) ;;
-            prerelease) flags=(--prerelease --latest=false) ;;
-            stable) flags=(--latest=true) ;;
-            *) echo 'Invalid release type'; exit 1 ;;
-          esac
+          if [ "$RELEASE_PRERELEASE" = true ]; then
+            flags+=(--prerelease)
+          fi
           gh release create "$tag" ./* "${flags[@]}" \
-            --target "$GITHUB_SHA" --title "MirrorPSX $RELEASE_VERSION" \
+            --target "$GITHUB_SHA" --title "$RELEASE_TITLE" \
             --notes-file "$RUNNER_TEMP/release-notes.md"
-          printf 'Created %s: [%s](%s/%s/releases/tag/%s)\n' \
-            "$RELEASE_TYPE" "$tag" "$GITHUB_SERVER_URL" "$GH_REPO" "$tag" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Created release: [%s](%s/%s/releases/tag/%s)\n' \
+            "$tag" "$GITHUB_SERVER_URL" "$GH_REPO" "$tag" >> "$GITHUB_STEP_SUMMARY"

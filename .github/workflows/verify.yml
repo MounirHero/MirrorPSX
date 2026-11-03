@@ -30,7 +30,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install test dependencies
-        run: python -m pip install PyYAML
+        run: python -m pip install PyYAML tzdata
       - name: Check Markdown, release contracts and CI configuration
         run: |
           python tests/documentation_test.py
