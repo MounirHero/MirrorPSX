@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Ensure the PS5's no-keyfile mode cannot derive the same private key from
 // the public, stable device ID on every invocation.
+#include <stdbool.h>
 #include "pairing.h"
 #include <stdio.h>
 #include <string.h>
