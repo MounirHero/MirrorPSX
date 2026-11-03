@@ -47,27 +47,27 @@ Output:
 
 ```text
 dist/ps5-v10.00/
-â”œâ”€â”€ MirrorPSX-PS5-v10.00.pkg
-â”œâ”€â”€ MirrorPSX-PS5-v10.00.zip
-â”œâ”€â”€ OpenProspero-SharedBroker.elf
-â”œâ”€â”€ OpenProspero-SharedBroker-LICENSE.txt
-â”œâ”€â”€ INSTALL.txt
-â”œâ”€â”€ release.json
-â””â”€â”€ SHA256SUMS.txt
+├── MirrorPSX-PS5-v10.00.pkg
+├── MirrorPSX-PS5-v10.00.zip
+├── OpenProspero-SharedBroker.elf
+├── OpenProspero-SharedBroker-LICENSE.txt
+├── INSTALL.txt
+├── release.json
+└── SHA256SUMS.txt
 ```
 
 Inside the ZIP:
 
 ```text
 PPSA99221/
-â”œâ”€â”€ eboot.bin
-â”œâ”€â”€ sce_sys/
-â”‚   â”œâ”€â”€ param.json
-â”‚   â””â”€â”€ icon0.png
-â”œâ”€â”€ sce_module/libc.prx
-â”œâ”€â”€ assets/
-â”œâ”€â”€ LICENSE
-â””â”€â”€ THIRD_PARTY_NOTICES.md
+├── eboot.bin
+├── sce_sys/
+│   ├── param.json
+│   └── icon0.png
+├── sce_module/libc.prx
+├── assets/
+├── LICENSE
+└── THIRD_PARTY_NOTICES.md
 ```
 
 Extract on the computer, then copy `PPSA99221/` to

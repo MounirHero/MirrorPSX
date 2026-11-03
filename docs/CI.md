@@ -53,7 +53,7 @@ to create a draft release.
 
 ## Running it
 
-Open **Actions â†’ PS5 release artifacts â†’ Run workflow**, choose the default
+Open **Actions → PS5 release artifacts → Run workflow**, choose the default
 branch and enter a native package version such as `10.00`. The result contains
 the PKG, folder ZIP, matching external companion, license, installation guide,
 manifest and checksums.

@@ -91,6 +91,7 @@ jobs:
 
       - name: Fetch pinned public build inputs
         run: |
+          python tests/documentation_test.py
           python tests/ci_config_test.py
           python tools/ci-bootstrap.py
 

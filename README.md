@@ -4,7 +4,7 @@
 
 **Bring your screen and videos to a native PS5 receiver.**
 
-Apple screen mirroring Â· DLNA video Â· Vulkan interface Â· Windows preview
+Apple screen mirroring · DLNA video · Vulkan interface · Windows preview
 
 [![Platform](https://img.shields.io/badge/platform-PS5%20%7C%20Windows-1668c7?style=flat-square)](#requirements)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599c?style=flat-square)](docs/BUILDING.md)
@@ -12,7 +12,7 @@ Apple screen mirroring Â· DLNA video Â· Vulkan interface Â· Windows previe
 [![Status](https://img.shields.io/badge/status-experimental-e8a317?style=flat-square)](#project-status)
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-3d8b69?style=flat-square)](LICENSE)
 
-[Downloads](https://github.com/seregonwar/MirrorPSX/releases) Â· [Install](#installation) Â· [Connect](#connecting-a-device) Â· [Build](docs/BUILDING.md) Â· [Report an issue](https://github.com/seregonwar/MirrorPSX/issues)
+[Downloads](https://github.com/seregonwar/MirrorPSX/releases) · [Install](#installation) · [Connect](#connecting-a-device) · [Build](docs/BUILDING.md) · [Report an issue](https://github.com/seregonwar/MirrorPSX/issues)
 
 </div>
 
@@ -98,7 +98,7 @@ The directory must contain `eboot.bin`, `sce_sys/`, `sce_module/` and `assets/` 
 ### iPhone, iPad and Mac
 
 1. Select Apple screen reception in MirrorPSX.
-2. Open **Control Center â†’ Screen Mirroring** on the sending device.
+2. Open **Control Center → Screen Mirroring** on the sending device.
 3. Select **MirrorPSX - PS5**, or **MirrorPSX - PC** for the Windows receiver.
 4. Enter the PIN shown in MirrorPSX when prompted on the sender.
 
