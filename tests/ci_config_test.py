@@ -32,6 +32,23 @@ class CIConfigTests(unittest.TestCase):
         self.assertEqual(upload["with"]["path"], "dist/ps5-v${{ inputs.version }}/")
         self.assertFalse(any("cache@" in s.get("uses", "") for s in JOB["steps"]))
 
+    def test_native_release_requires_verification(self):
+        self.assertEqual(JOB["needs"], "verify")
+        verify = yaml.load((ROOT / ".github/workflows/verify.yml").read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        self.assertIn("pull_request", verify["on"])
+        self.assertIn("workflow_call", verify["on"])
+        self.assertEqual(verify["permissions"], {"contents": "read"})
+        self.assertNotIn("secrets.", (ROOT / ".github/workflows/verify.yml").read_text(encoding="utf-8"))
+
+    def test_publication_is_draft_only_and_opt_in(self):
+        self.assertEqual(WORKFLOW["on"]["workflow_dispatch"]["inputs"]["draft_release"]["default"], "false")
+        draft = WORKFLOW["jobs"]["draft"]
+        self.assertEqual(draft["if"], "inputs.draft_release")
+        self.assertEqual(draft["needs"], "build")
+        command = draft["steps"][-1]["run"]
+        self.assertIn("--draft --prerelease", command)
+        self.assertIn("sha256sum -c", command)
+
     def preflight(self, **overrides):
         step = next(s for s in JOB["steps"] if s.get("name") == "Check release configuration")
         source = step["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]

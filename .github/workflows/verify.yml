@@ -1,0 +1,158 @@
+name: Verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tooling:
+    name: Docs, release and CI checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: python -m pip install PyYAML
+      - name: Check Markdown, release contracts and CI configuration
+        run: |
+          python tests/documentation_test.py
+          python tests/ps5_release_test.py
+          python tests/ci_config_test.py
+      - name: Check PowerShell syntax
+        shell: pwsh
+        run: |
+          foreach ($script in @('tools/package-ps5.ps1','tools/build-shared-broker.ps1')) {
+            $tokens = $null; $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $script), [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count) { throw ($errors | Out-String) }
+          }
+
+  linux:
+    name: Linux host build and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config ccache libvulkan-dev libglfw3-dev \
+            libavcodec-dev libavutil-dev libswscale-dev libavformat-dev libswresample-dev \
+            libsdl2-dev libxml2-dev libplist-dev libssl-dev ffmpeg
+      - name: Configure and build
+        run: |
+          cmake -S . -B build/desktop -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build/desktop -j2
+      - name: Run real receiver, decoder, UI, PIN and media tests
+        env:
+          SDL_AUDIODRIVER: dummy
+        run: ctest --test-dir build/desktop --output-on-failure --output-junit "$GITHUB_WORKSPACE/build/linux-tests.xml"
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: Linux-test-reports
+          path: |
+            build/linux-tests.xml
+            build/desktop/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  windows:
+    name: Windows preview build and tests
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up MinGW dependencies
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          cache: true
+          install: >-
+            mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-pkgconf mingw-w64-x86_64-vulkan-headers
+            mingw-w64-x86_64-vulkan-loader mingw-w64-x86_64-glfw
+            mingw-w64-x86_64-ffmpeg mingw-w64-x86_64-SDL2
+            mingw-w64-x86_64-libxml2 mingw-w64-x86_64-libplist
+            mingw-w64-x86_64-openssl mingw-w64-x86_64-python
+      - name: Configure and build
+        run: |
+          cmake -S . -B build/desktop -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build build/desktop -j2
+          python tools/copy-runtime.py build/desktop/MirrorPSX.exe "$(cygpath -m /mingw64)"
+      - name: Run real receiver, decoder, UI, PIN and media tests
+        env:
+          SDL_AUDIODRIVER: dummy
+        run: ctest --test-dir build/desktop --output-on-failure --output-junit "$(cygpath -m "$PWD/build/windows-tests.xml")"
+      - name: Prepare portable preview
+        run: |
+          mkdir -p build/windows-preview/MirrorPSX
+          cp build/desktop/MirrorPSX.exe build/desktop/*.dll build/windows-preview/MirrorPSX/
+          cp -R assets build/windows-preview/MirrorPSX/assets
+          cp LICENSE THIRD_PARTY_NOTICES.md build/windows-preview/MirrorPSX/
+          if [ -d /mingw64/share/licenses ]; then
+            cp -R /mingw64/share/licenses build/windows-preview/MirrorPSX/dependency-licenses
+          fi
+      - name: Upload portable Windows preview
+        uses: actions/upload-artifact@v7
+        with:
+          name: MirrorPSX-Windows-preview-${{ github.sha }}
+          path: build/windows-preview/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: Windows-test-reports
+          path: |
+            build/windows-tests.xml
+            build/desktop/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  result:
+    name: Verify result
+    if: always()
+    needs: [tooling, linux, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every verification job
+        env:
+          TOOLING: ${{ needs.tooling.result }}
+          LINUX: ${{ needs.linux.result }}
+          WINDOWS: ${{ needs.windows.result }}
+        run: |
+          for result in "$TOOLING" "$LINUX" "$WINDOWS"; do
+            test "$result" = success || exit 1
+          done

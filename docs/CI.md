@@ -4,6 +4,24 @@ The `PS5 release artifacts` workflow imports the **private OpenProspero SDK
 during the build**. It never expects the SDK to be committed to MirrorPSX or
 available in a developer's sibling directory on the runner.
 
+## Verification workflows
+
+Like MemDBG, MirrorPSX separates routine verification from release creation.
+`Verify` runs on pushes to main, pull requests and manual dispatches, and can be
+called by the native release workflow. It needs no private SDK credentials.
+
+| Job | Checks / output |
+| --- | --- |
+| Tooling (Ubuntu + Windows) | Markdown encoding/links, release contracts, CI preflight and PowerShell syntax. |
+| Linux host | Debug build and real decoder, receiver, UI, PIN and media tests; JUnit and failure logs. This is host validation, not a Linux distribution promise. |
+| Windows preview | MinGW Debug build, bundled DLLs, real tests, JUnit/logs and a portable preview artifact with assets/licenses. |
+| Verify result | A single required-check candidate that fails if any verification job fails. |
+
+Desktop jobs run independently with explicit timeouts. MSYS2 package downloads
+are cached; SDK sources/archives are not. Failed tests keep diagnostics.
+Configure branch protection to require **Verify result** if desired; the workflow
+does not change repository rules.
+
 ## One-time repository configuration
 
 Create a GitHub Actions environment named `main` and configure:
@@ -30,7 +48,7 @@ manual `workflow_dispatch`, and does not expose secrets to pull-request jobs.
 
 ## Build flow
 
-1. Check out MirrorPSX and validate the version and required configuration.
+1. Require the complete Verify workflow, then validate the release configuration.
 2. Import OpenProspero privately into `_deps/sdk`: use the optional pinned
    `OPENPROSPERO_REF`, or automatically resolve the latest default-branch commit.
    Record the actual SHA in the workflow summary and build environment.
@@ -46,10 +64,11 @@ manual `workflow_dispatch`, and does not expose secrets to pull-request jobs.
 7. Upload only `dist/ps5-vNN.NN/` as the workflow artifact. No SDK checkout,
    build tree, credential header, token file or private build receipt is uploaded.
 
-The workflow does not upload an SDK cache and does not publish a GitHub release,
-create a tag, install anything on a PS5 or modify the private SDK repository.
-After downloading and reviewing the artifact, follow [RELEASING.md](RELEASING.md)
-to create a draft release.
+The workflow does not upload an SDK cache, install anything on a PS5 or modify
+the private SDK repository. By default it only uploads the checked release set.
+An explicit **draft_release** input can create a draft prerelease after all jobs
+pass and downloaded checksums verify. It refuses an existing release and never
+publishes automatically. See [RELEASING.md](RELEASING.md).
 
 ## Running it
 
@@ -69,3 +88,11 @@ Workflow structure, configuration checks and exporter tests can run locally.
 The authenticated build itself requires the configured GitHub environment and
 access to the private SDK/submodules. A successful workflow still does not
 verify console launch or streaming; use [CONSOLE_TESTING.md](CONSOLE_TESTING.md).
+
+## Public dependency mirrors
+
+The original ps5-homebrew-ui and PS5_Mesa repository URLs became inaccessible.
+The lock file uses public mirrors that contain the exact same recorded commits;
+compiler/runtime code revisions are unchanged. Upstream licenses and attribution
+remain intact. CI authenticates the SDK separately and does not send its read
+token to these public clones.

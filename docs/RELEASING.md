@@ -10,7 +10,9 @@ own broker, identity and runtime requirements.
 
 For a hosted build, configure [the private SDK CI environment](CI.md) and run
 **PS5 release artifacts** from GitHub Actions. It produces the same release set
-as the local commands below.
+as the local commands below. Routine Verify jobs must pass first.
+The optional `draft_release` input creates a draft prerelease after checksum
+validation; it defaults to false and will not overwrite an existing release.
 
 Follow [BUILDING.md](BUILDING.md). Build the broker before the native title:
 

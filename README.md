@@ -9,6 +9,7 @@ Apple screen mirroring · DLNA video · Vulkan interface · Windows preview
 [![Platform](https://img.shields.io/badge/platform-PS5%20%7C%20Windows-1668c7?style=flat-square)](#requirements)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599c?style=flat-square)](docs/BUILDING.md)
 [![Vulkan](https://img.shields.io/badge/renderer-Vulkan-ac162c?style=flat-square)](#features)
+[![Verify](https://github.com/seregonwar/MirrorPSX/actions/workflows/verify.yml/badge.svg)](https://github.com/seregonwar/MirrorPSX/actions/workflows/verify.yml)
 [![Status](https://img.shields.io/badge/status-experimental-e8a317?style=flat-square)](#project-status)
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-3d8b69?style=flat-square)](LICENSE)
 

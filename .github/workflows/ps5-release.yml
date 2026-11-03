@@ -7,6 +7,10 @@ on:
         description: Native package version (NN.NN)
         required: true
         default: '10.00'
+      draft_release:
+        description: Create a draft prerelease after a successful build
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -16,9 +20,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify:
+    name: Verify before native release
+    uses: ./.github/workflows/verify.yml
+
   build:
     # Never expose SDK credentials to PRs, forks, or arbitrary dispatch branches.
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    needs: verify
     runs-on: ubuntu-24.04
     environment: main
     timeout-minutes: 180
@@ -136,3 +145,39 @@ jobs:
           path: dist/ps5-v${{ inputs.version }}/
           if-no-files-found: error
           retention-days: 14
+
+  draft:
+    name: Prepare draft prerelease
+    if: inputs.draft_release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Download verified release set
+        uses: actions/download-artifact@v8
+        with:
+          name: MirrorPSX-PS5-v${{ inputs.version }}
+          path: release-assets
+      - name: Verify checksums and prepare draft
+        run: |
+          cd release-assets
+          sha256sum -c SHA256SUMS.txt
+          tag="v$RELEASE_VERSION"
+          # Never overwrite a previously published release or replace its assets.
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release already exists; review it instead of overwriting it."
+            exit 1
+          fi
+          printf '%s\n' \
+            'Experimental PS5 build. Choose PKG or folder ZIP; use the matching external shared companion.' \
+            'See INSTALL.txt and the repository README. Hardware verification remains separate from CI checks.' \
+            "Built from $GITHUB_SHA by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            > "$RUNNER_TEMP/release-notes.md"
+          gh release create "$tag" ./* --draft --prerelease --latest=false \
+            --target "$GITHUB_SHA" --title "MirrorPSX $RELEASE_VERSION" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"

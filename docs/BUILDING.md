@@ -88,3 +88,7 @@ and dummy audio output when FFmpeg is available.
 UI and pipeline checks, benchmarks and protocol tests do not establish PS5
 performance or device compatibility. Hardware evidence is recorded separately
 in [CONSOLE_TESTING.md](CONSOLE_TESTING.md).
+
+CI also compiles and tests the host receiver on Linux and the desktop preview on
+Windows in Debug mode. Only Windows gets a portable preview artifact; the native
+PS5 release remains a separate, credentialed job. See [CI.md](CI.md).

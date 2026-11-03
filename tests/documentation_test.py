@@ -14,7 +14,7 @@ class DocumentationTests(unittest.TestCase):
             with self.subTest(document=path.name):
                 text = path.read_text(encoding="utf-8")
                 for marker in markers:
-                    self.assertNotIn(marker, text, f"Corrupted text in {path.name}")
+                    self.assertFalse(marker in text, f"Corrupted text in {path.name}: {ascii(marker)}")
                 self.assertIsNone(re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", text))
 
     def test_fences_and_local_links(self):
