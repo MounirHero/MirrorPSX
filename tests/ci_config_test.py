@@ -18,7 +18,7 @@ class CIConfigTests(unittest.TestCase):
     def test_only_trusted_manual_builds(self):
         self.assertEqual(set(WORKFLOW["on"]), {"workflow_dispatch"})
         self.assertIn("default_branch", JOB["if"])
-        self.assertEqual(JOB["environment"], "main")
+        self.assertEqual(JOB["environment"], {"name": "main", "deployment": "false"})
         self.assertEqual(WORKFLOW["permissions"], {"contents": "read"})
 
     def test_private_sdk_is_authenticated_and_not_persisted(self):
@@ -49,7 +49,7 @@ class CIConfigTests(unittest.TestCase):
         publish = WORKFLOW["jobs"]["publish"]
         self.assertEqual(publish["if"], "inputs.release_type != 'artifacts'")
         self.assertEqual(publish["needs"], "build")
-        self.assertEqual(publish["environment"], "main")
+        self.assertEqual(publish["environment"], {"name": "main", "deployment": "false"})
         command = publish["steps"][-1]["run"]
         self.assertIn("sha256sum --strict -c", command)
         self.assertNotIn("${{ inputs.", command)

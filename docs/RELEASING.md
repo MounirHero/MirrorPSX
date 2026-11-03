@@ -124,6 +124,9 @@ also stop publication. A stable label does not establish hardware compatibility.
 The release job uses the existing `main` environment and the repository's
 automatic `GITHUB_TOKEN`; no additional personal publishing token is needed.
 Only that job receives write access. No push or tag event publishes a release.
+Both jobs use `deployment: false`: the `main` environment supplies configuration
+without registering a deployment. Outputs go to Actions artifacts and GitHub
+Releases, not to a running device or hosting service.
 
 ### Local publication
 

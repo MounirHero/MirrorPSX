@@ -4,6 +4,11 @@ The `PS5 release` workflow imports the **private OpenProspero SDK
 during the build**. It never expects the SDK to be committed to MirrorPSX or
 available in a developer's sibling directory on the runner.
 
+This is a build and GitHub Releases workflow. Both native build and publication
+use `environment: {name: main, deployment: false}` to access the configured
+secrets/variables without creating GitHub deployment records. No server, site
+or console receives a deployment from this workflow.
+
 ## Verification workflows
 
 Like MemDBG, MirrorPSX separates routine verification from release creation.
