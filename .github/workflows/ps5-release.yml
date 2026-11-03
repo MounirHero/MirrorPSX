@@ -163,8 +163,9 @@ jobs:
         run: |
           cmake -S _deps/sdk -B _deps/sdk/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=clang++-19 \
-            -DOP_ENABLE_PACKAGING=ON -DOP_BUILD_GUI=OFF -DOP_BUILD_TESTS=OFF -DOP_BUILD_EXAMPLES=OFF
-          cmake --build _deps/sdk/build --target prospero prospero-link prospero-stub -j2
+            -DOP_ENABLE_PACKAGING=ON -DOP_BUILD_GUI=OFF -DOP_BUILD_TESTS=ON -DOP_BUILD_EXAMPLES=OFF
+          cmake --build _deps/sdk/build --target prospero prospero-link prospero-stub op-pfs-tests -j2
+          ctest --test-dir _deps/sdk/build -R '^pfs-extraction$' --output-on-failure
           echo "$GITHUB_WORKSPACE/_deps/sdk/build/bin" >> "$GITHUB_PATH"
 
       - name: Build native RADV

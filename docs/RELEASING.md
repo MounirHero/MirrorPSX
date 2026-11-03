@@ -85,7 +85,10 @@ keep `/data/mirrorpsx/` and its pairing keys.
 3. The SDK signs the executable and builds the PKG with `--no-companion`.
    This flag excludes the **internal** companion; the app still requires the
    external shared service.
-4. The SDK validates and re-extracts the final PKG. Its runtime and executable
+4. The SDK validates and re-extracts the final PKG with `--include-metadata`,
+   restoring `sce_sys/param.json` and public artwork from the outer CNT entries
+   as well as the inner application files. Use an SDK version supporting this
+   extraction option. Its runtime and executable
    must match the staged files exactly.
 5. The ZIP is generated from that re-extracted title, then each archived file
    is checked against the source bytes. Assets, metadata and licenses are

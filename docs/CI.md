@@ -64,7 +64,8 @@ Pull-request jobs do not receive the private SDK credentials.
    `tools/ci-dependencies.json`: FFmpeg, libplist, UI/runtime references, Mesa
    and the platform library. Bootstrap requires a clean runner and does not
    overwrite existing checkouts.
-5. Build the SDK host tools, native RADV, the shared external broker, the native
+5. Build the SDK host tools and run its `pfs-extraction` round-trip test, including
+   public CNT metadata extraction. Then build native RADV, the shared external broker, the native
    title and its clean-room runtime. The broker receives its persistent value
    only in its build step; a random per-run broker is not generated in CI.
 6. Run exporter tests and build/validate the PKG and equivalent folder ZIP.

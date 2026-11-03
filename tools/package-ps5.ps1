@@ -81,7 +81,7 @@ icon.save(app/'sce_sys/icon0.png')
     & $prospero validate $pkg[0].FullName
     if ($LASTEXITCODE -ne 0) { throw 'PS5 package structural validation failed' }
     $verified = Join-Path $root "build/ps5-package-$stamp/verified"
-    & $prospero extract $pkg[0].FullName $verified
+    & $prospero extract $pkg[0].FullName $verified --include-metadata
     if ($LASTEXITCODE -ne 0) { throw 'PS5 package extraction verification failed' }
     $extractedRuntime = Join-Path $verified 'sce_module/libc.prx'
     if (-not (Test-Path -LiteralPath $extractedRuntime) -or
