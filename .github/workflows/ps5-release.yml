@@ -87,7 +87,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build pkg-config clang-19 lld-19 llvm-19-dev libclang-rt-19-dev \
+          sudo apt-get install -y ninja-build pkg-config clang-19 clang-tools-19 lld-19 llvm-19-dev libclang-rt-19-dev \
             libclang-19-dev libclc-19-dev libclc-19 libllvmspirvlib-19-dev spirv-tools \
             glslang-tools zlib1g-dev libssl-dev libpng-dev libdrm-dev libexpat1-dev \
             bison flex libzstd-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev \
