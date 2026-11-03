@@ -45,7 +45,7 @@ jobs:
     env:
       OPENPROSPERO_SDK: ${{ github.workspace }}/_deps/sdk/sdk
       OPENPROSPERO_CLANG: clang-19
-      OPENPROSPERO_LLD: ld.lld-19
+      OPENPROSPERO_LLD: /usr/bin/ld.lld-19
       OPENPROSPERO_AR: llvm-ar-19
       OPENPROSPERO_STRIP: llvm-strip-19
       MIRROR_PLATFORM_SOURCE: ${{ github.workspace }}/_deps/platform
@@ -108,6 +108,7 @@ jobs:
           "$RUNNER_TEMP/mirror-python/bin/pip" install pillow pyyaml meson ninja mako packaging
           echo "$RUNNER_TEMP/mirror-python/bin" >> "$GITHUB_PATH"
           echo /usr/lib/llvm-19/bin >> "$GITHUB_PATH"
+          "$OPENPROSPERO_LLD" --version
 
       - name: Fetch pinned public build inputs
         run: |
