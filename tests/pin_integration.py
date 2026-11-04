@@ -12,7 +12,7 @@ def h(*parts): return int.from_bytes(H(*parts), 'big')
 def pad(n): return n.to_bytes(256, 'big')
 k = h(pad(N), pad(g))
 run = pathlib.Path(sys.argv[1]).resolve()
-work = root / 'build/pin-test'
+work = root / ('build/pin-short-test' if '--short-encoding' in sys.argv else 'build/pin-test')
 work.mkdir(exist_ok=True)
 with (work/'server.log').open('w') as log:
  p = subprocess.Popen([str(run)], cwd=work, stdin=subprocess.PIPE,
@@ -44,7 +44,9 @@ with (work/'server.log').open('w') as log:
   def attempt(pin, expected):
    with connect() as s:
     status, response, _ = request(s, 'pair-setup-pin', {'method':'pin','user':'12:15:17:A2:ED:7E'})
-    assert status == 200
+    assert status == 200, f'SRP challenge setup: expected 200, got {status}'
+    if '--short-encoding' in sys.argv:
+     assert response['salt'] == b'\0'*15+b'\x01', 'short salt must be left-padded to its wire width'
     salt = b(int.from_bytes(response['salt'],'big')); B = int.from_bytes(response['pk'],'big')
     username = b'12:15:17:A2:ED:7E'
     a = int.from_bytes(secrets.token_bytes(32),'big'); A = pow(g,a,N)

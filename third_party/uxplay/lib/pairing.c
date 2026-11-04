@@ -530,21 +530,29 @@ srp_new_user(pairing_session_t *session, pairing_t *pairing, const char *device_
                                        (const unsigned char **) &srp_s, &len_s,
                                        (const unsigned char **) &srp_v, &len_v,
                                        NULL, NULL);
-    if (len_s != SRP_SALT_SIZE || len_v != SRP_VERIFIER_SIZE) {
+    /* OpenSSL emits minimal-width big-endian integers. Valid SRP values may
+     * start with zero bytes; normalize their storage instead of rejecting a
+     * randomly shorter salt or verifier. The integer values stay unchanged. */
+    if (!srp_s || !srp_v || len_s <= 0 || len_s > SRP_SALT_SIZE ||
+        len_v <= 0 || len_v > SRP_VERIFIER_SIZE) {
+        free(srp_s);
+        free(srp_v);
         return -3;
     }
 
-    memcpy(session->srp->salt, srp_s, SRP_SALT_SIZE);
-    memcpy(session->srp->verifier, srp_v, SRP_VERIFIER_SIZE);
+    memcpy(session->srp->salt + SRP_SALT_SIZE - len_s, srp_s, len_s);
+    memcpy(session->srp->verifier + SRP_VERIFIER_SIZE - len_v, srp_v, len_v);
 
     *salt = (char *) session->srp->salt;
-    *len_salt = len_s;
+    *len_salt = SRP_SALT_SIZE;
 
     srp_create_server_ephemeral_key(SRP_SHA, SRP_NG,
                                     srp_v, len_v,
                                     srp_b, len_b,
                                     (const unsigned char **) &srp_B, &len_B,
                                     NULL, NULL, 1);
+    free(srp_s);
+    free(srp_v);
 
     *pk = (char *) srp_B;
     *len_pk = len_B;

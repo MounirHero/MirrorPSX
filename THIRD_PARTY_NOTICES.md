@@ -133,3 +133,13 @@ The previous fixed 64-byte copies read past both proofs. R10 validates and uses
 20 bytes without changing the SRP algorithm or accepting incorrect credentials.
 The native setup-failure guard remains. tests/pin_integration.py implements an
 independent SRP client for positive, negative and retry interoperability tests.
+
+The SRP integer-encoding portability fix in `pairing.c` accepts OpenSSL's
+minimal-width salt/verifier representations and left-pads the fixed-size session
+buffers. Leading zero bytes must not cause valid credentials to be rejected.
+The integer values, SRP algorithm and proof validation are unchanged. Temporary
+SRP buffers are freed after use. LGPL notices are preserved. OpenSSL documents
+this encoding at https://docs.openssl.org/3.5/man3/BN_bn2bin/.
+`pin_short_encoding` uses a test-only deterministic salt/PIN and an independent
+RTSP client to cover a short salt and verifier, bad credentials, retry and server
+proof. Those test fixtures are not linked into the application.
